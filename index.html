@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>助成金統合管理システム</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body { font-family: "Hiragino Kaku Gothic ProN","Hiragino Sans",Meiryo,"Yu Gothic",sans-serif; }
+
+    /* Nav */
+    .nav-tab { display:inline-flex;align-items:center;gap:5px;padding:12px 14px;font-size:13px;color:#94a3b8;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;text-decoration:none;transition:all 0.15s; }
+    .nav-tab:hover { color:#fff;background:rgba(255,255,255,0.1); }
+    .nav-tab.active { color:#fff;border-bottom-color:#60a5fa; }
+
+    /* Table */
+    table { border-collapse:collapse;width:100%; }
+    th,td { padding:7px 10px;text-align:left;border-bottom:1px solid #f3f4f6;font-size:13px; }
+    th { background:#f9fafb;font-weight:500;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb;white-space:nowrap; }
+    tr:hover td { background:#fafbfc; }
+
+    /* Badges */
+    .badge { display:inline-flex;align-items:center;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap; }
+    .badge-red    { background:#fee2e2;color:#991b1b; }
+    .badge-orange { background:#ffedd5;color:#9a3412; }
+    .badge-yellow { background:#fef9c3;color:#713f12; }
+    .badge-green  { background:#dcfce7;color:#14532d; }
+    .badge-blue   { background:#dbeafe;color:#1e40af; }
+    .badge-gray   { background:#f3f4f6;color:#4b5563; }
+    .stbadge { display:inline-flex;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500;white-space:nowrap; }
+
+    /* Card */
+    .card { background:white;border-radius:12px;border:1px solid #e5e7eb;overflow:hidden;margin-bottom:20px; }
+    .card-header { padding:10px 14px;border-bottom:1px solid #e5e7eb;font-weight:600;font-size:14px; }
+    a { color:#2563eb;text-decoration:none; }
+    a:hover { text-decoration:underline; }
+
+    /* Modal */
+    #modal-overlay { display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;overflow-y:auto;padding:40px 16px; }
+    #modal-box { background:white;border-radius:14px;max-width:600px;margin:0 auto;padding:24px;position:relative;animation:fadeUp 0.2s; }
+
+    /* Form */
+    .form-row { margin-bottom:13px; }
+    .form-row label { display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px; }
+    .form-row input,.form-row select,.form-row textarea {
+      width:100%;border:1px solid #d1d5db;border-radius:7px;
+      padding:7px 10px;font-size:13px;font-family:inherit;box-sizing:border-box;
+    }
+    .form-row textarea { min-height:60px;resize:vertical; }
+    .form-row input:focus,.form-row select:focus,.form-row textarea:focus {
+      outline:2px solid #60a5fa;outline-offset:-1px;
+    }
+    .form-grid { display:grid;grid-template-columns:1fr 1fr;gap:0 14px; }
+    .form-actions { display:flex;gap:8px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid #f3f4f6; }
+    .btn-primary  { background:#2563eb;color:white;border:none;border-radius:7px;padding:9px 20px;font-size:13px;cursor:pointer; }
+    .btn-primary:hover { background:#1d4ed8; }
+    .btn-cancel   { background:#f3f4f6;color:#374151;border:none;border-radius:7px;padding:9px 14px;font-size:13px;cursor:pointer; }
+    .btn-danger   { background:#fee2e2;color:#dc2626;border:none;border-radius:7px;padding:9px 14px;font-size:13px;cursor:pointer;margin-right:auto; }
+    .btn-add { background:#2563eb;color:white;border:none;border-radius:7px;padding:7px 14px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px; }
+    .btn-add:hover { background:#1d4ed8; }
+    .btn-edit { background:none;border:none;cursor:pointer;font-size:13px;padding:2px 5px;opacity:0.5; }
+    .btn-edit:hover { opacity:1; }
+    .req { color:#dc2626;margin-left:2px; }
+    .hint { font-size:11px;color:#9ca3af;margin-top:3px; }
+
+    /* Toast */
+    .toast { position:fixed;bottom:24px;right:24px;z-index:999;color:white;padding:10px 16px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.2);animation:fadeUp 0.2s; }
+
+    @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    input[type=text]:focus,input[type=date]:focus,input[type=number]:focus { outline:2px solid #60a5fa; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+<!-- ========== NAV ========== -->
+<nav class="bg-slate-800 text-white flex items-center overflow-x-auto sticky top-0 z-50 shadow-lg" style="min-height:48px">
+  <span class="px-4 font-bold text-sm border-r border-slate-700 whitespace-nowrap flex-shrink-0 py-3">📋 助成金管理</span>
+  <a class="nav-tab" href="#dashboard">📊 ダッシュボード</a>
+  <a class="nav-tab" href="#companies">🏢 会社</a>
+  <a class="nav-tab" href="#career-up">👔 キャリアアップ</a>
+  <a class="nav-tab" href="#biz">🏭 業務改善</a>
+  <a class="nav-tab" href="#work">⏰ 働き方改革</a>
+  <a class="nav-tab" href="#dual">👶 両立支援</a>
+</nav>
+
+<!-- ========== CONTENT ========== -->
+<div id="content" class="flex-1 max-w-6xl mx-auto w-full p-5">
+  <div style="text-align:center;padding:60px;color:#9ca3af">読み込み中...</div>
+</div>
+
+<!-- ========== MODAL ========== -->
+<div id="modal-overlay" onclick="overlayClick(event)">
+  <div id="modal-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+      <h2 id="modal-title" style="font-size:16px;font-weight:700;color:#111827"></h2>
+      <button onclick="closeModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#9ca3af;line-height:1">×</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+// ================================================================
+//  CONFIG
+// ================================================================
+const SUPABASE_URL      = 'https://zffoaelhfskphgihbsll.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmZm9hZWxoZnNrcGhnaWhic2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxODk2MjMsImV4cCI6MjA5MTc2NTYyM30.VbH19CiSqOgRwS8jLCP9gZjphq8RWj72hKCWMaP4NJ4';
+
+const { createClient } = window.supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ================================================================
+//  日付ユーティリティ
+// ================================================================
+function parseDate(s) { if(!s)return null; const d=new Date(s); return isNaN(d.getTime())?null:d; }
+function today0() { const d=new Date(); d.setHours(0,0,0,0); return d; }
+function daysFromToday(d) { if(!d)return null; const t=d instanceof Date?new Date(d):new Date(d); t.setHours(0,0,0,0); return Math.floor((t-today0())/86400000); }
+function addMonths(d,m) { const r=new Date(d);const day=r.getDate();r.setMonth(r.getMonth()+m);if(r.getDate()<day)r.setDate(0);return r; }
+function addDays(d,n) { const r=new Date(d);r.setDate(r.getDate()+n);return r; }
+function fmt(d) { if(!d)return '—'; const dt=d instanceof Date?d:new Date(d); if(isNaN(dt.getTime()))return '—'; return `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}`; }
+function toInputDate(d) { if(!d)return ''; const dt=d instanceof Date?d:new Date(d); if(isNaN(dt.getTime()))return ''; return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`; }
+
+// ================================================================
+//  バッジ
+// ================================================================
+function deadlineBadge(days) {
+  if(days===null||days===undefined) return '<span class="badge badge-blue">✅ 完了</span>';
+  if(days<0)  return `<span class="badge badge-red">🔴 ${Math.abs(days)}日超過</span>`;
+  if(days===0)return `<span class="badge badge-red">🔴 本日期限</span>`;
+  if(days<=7) return `<span class="badge badge-orange">🟠 あと${days}日</span>`;
+  if(days<=30)return `<span class="badge badge-yellow">🟡 あと${days}日</span>`;
+  return `<span class="badge badge-green">🟢 あと${days}日</span>`;
+}
+const STATUS_STYLE = {
+  '未申請':'background:#f3f4f6;color:#4b5563','申請待ち':'background:#fef3c7;color:#92400e',
+  '交付申請済':'background:#fef9c3;color:#713f12','交付決定済':'background:#dbeafe;color:#1e40af',
+  '事業実施中':'background:#cffafe;color:#155e75','事業完了（報告待）':'background:#ffedd5;color:#9a3412',
+  '事業実績報告済':'background:#f3e8ff;color:#6b21a8','支給申請済':'background:#e0e7ff;color:#3730a3',
+  '承認済（助成金受領）':'background:#dcfce7;color:#14532d','承認済':'background:#dcfce7;color:#14532d',
+  '申請済':'background:#e0e7ff;color:#3730a3','不承認':'background:#fee2e2;color:#991b1b',
+  '育休中':'background:#fce7f3;color:#831843','介護休業中':'background:#ffe4e6;color:#9f1239',
+  '制度利用中':'background:#ccfbf1;color:#134e4a','支給申請待ち':'background:#fef3c7;color:#92400e',
+};
+function stBadge(s) { const st=STATUS_STYLE[s]||'background:#f3f4f6;color:#4b5563'; return `<span class="stbadge" style="${st}">${s||'—'}</span>`; }
+const TYPE_STYLE = { career_up:'background:#f3e8ff;color:#5b21b6',biz:'background:#dbeafe;color:#1e40af',work:'background:#ccfbf1;color:#0f766e',dual:'background:#fce7f3;color:#9d174d' };
+const TYPE_LABEL = { career_up:'キャリアアップ',biz:'業務改善',work:'働き方改革',dual:'両立支援' };
+
+// ================================================================
+//  期限計算
+// ================================================================
+function salaryDateAfter(conv,months,pd) {
+  const th=addMonths(conv,months); let d=new Date(th.getFullYear(),th.getMonth(),pd);
+  if(d<th) d=new Date(th.getFullYear(),th.getMonth()+1,pd);
+  const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
+  if(pd>last) d=new Date(d.getFullYear(),d.getMonth()+1,0); return d;
+}
+function calcCareerUp(app) {
+  const conv=parseDate(app.conversion_date); const pd=app.salary_payment_day;
+  if(!conv||!pd) return {};
+  const fp=salaryDateAfter(conv,6,pd); const fs=addDays(fp,1); const fd=addDays(addMonths(fs,2),-1);
+  let sp=null,ss=null,sd=null;
+  if(app.is_priority_worker){sp=salaryDateAfter(conv,12,pd);ss=addDays(sp,1);sd=addDays(addMonths(ss,2),-1);}
+  return { fp,fs,fd, fDays:app.status_first==='承認済'?null:daysFromToday(fd), sp,ss,sd, sDays:(sd&&app.status_second!=='承認済')?daysFromToday(sd):null };
+}
+const BIZ_COMP_LIMIT=new Date(2027,0,31), BIZ_SUP_MAX=new Date(2027,3,10);
+function calcBiz(app) {
+  const comp=parseDate(app.completion_date_actual);
+  const isDone=['支給申請済','承認済（助成金受領）'].includes(app.status);
+  const compDays=comp?null:daysFromToday(BIZ_COMP_LIMIT);
+  let supLimit=null,supDays=null;
+  if(comp){const om=addMonths(comp,1);supLimit=om<BIZ_SUP_MAX?om:BIZ_SUP_MAX;supDays=isDone?null:daysFromToday(supLimit);}
+  return {compLimit:BIZ_COMP_LIMIT,compDays,supLimit,supDays};
+}
+const WORK_APP_LIMIT=new Date(2026,10,30), WORK_COMP_LIMIT=new Date(2027,0,31), WORK_SUP_MAX=new Date(2027,1,5);
+function calcWork(app) {
+  const ad=parseDate(app.application_date),cd=parseDate(app.completion_date);
+  const isDone=['支給申請済','承認済'].includes(app.status);
+  const notApp=['未申請','交付申請済'].includes(app.status);
+  const appDays=notApp?daysFromToday(WORK_APP_LIMIT):null;
+  let supLimit=null,supDays=null;
+  if(cd){const td=addDays(cd,30);supLimit=td<WORK_SUP_MAX?td:WORK_SUP_MAX;supDays=isDone?null:daysFromToday(supLimit);}
+  else if(ad){supLimit=WORK_SUP_MAX;supDays=isDone?null:daysFromToday(supLimit);}
+  return {appLimit:WORK_APP_LIMIT,appDays,compLimit:WORK_COMP_LIMIT,supLimit,supDays};
+}
+const DUAL_MASTER = {
+  '出生時両立支援（第1種）':[0,1,2,-1],'介護離職防止（休業取得時）':[0,1,2,-1],
+  '介護離職防止（職場復帰時）':[3,1,2,-1],'育児休業等支援（育休取得時）':[3,1,2,-1],
+  '育児休業等支援（職場復帰時）':[6,1,2,-1],'育休中等業務代替（1ヶ月未満）':[0,1,2,-1],
+  '育休中等業務代替（1ヶ月以上）':[3,1,2,-1],'柔軟な働き方選択制度':[6,1,2,-1],'不妊治療両立支援':[0,1,2,-1],
+};
+function calcDual(app) {
+  const m=DUAL_MASTER[app.support_course]; if(!m)return {};
+  const [sm,sd,lm,ld]=m; const base=parseDate(app.date2)||parseDate(app.date1); if(!base)return {};
+  const appStart=addDays(addMonths(base,sm),sd); const deadline=addDays(addMonths(appStart,lm),ld);
+  const isDone=['支給申請済','承認済'].includes(app.status);
+  return {base,appStart,deadline,days:isDone?null:daysFromToday(deadline)};
+}
+
+// ================================================================
+//  Supabase CRUD
+// ================================================================
+async function fetchAll() {
+  const [cu,bi,ws,ds,co]=await Promise.all([
+    db.from('career_up_applications').select('*,company:companies(id,name,size_category)').order('created_at',{ascending:false}),
+    db.from('business_improvement_applications').select('*,company:companies(id,name,size_category)').order('created_at',{ascending:false}),
+    db.from('work_style_applications').select('*,company:companies(id,name,size_category)').order('created_at',{ascending:false}),
+    db.from('dual_support_applications').select('*,company:companies(id,name,size_category)').order('created_at',{ascending:false}),
+    db.from('companies').select('*').order('name'),
+  ]);
+  if(cu.error)throw new Error(cu.error.message);
+  return { careerUp:cu.data||[], biz:bi.data||[], work:ws.data||[], dual:ds.data||[], companies:co.data||[] };
+}
+async function fetchCompanyDetail(id) {
+  const [co,cu,bi,ws,ds]=await Promise.all([
+    db.from('companies').select('*').eq('id',id).single(),
+    db.from('career_up_applications').select('*').eq('company_id',id).order('created_at',{ascending:false}),
+    db.from('business_improvement_applications').select('*').eq('company_id',id).order('created_at',{ascending:false}),
+    db.from('work_style_applications').select('*').eq('company_id',id).order('created_at',{ascending:false}),
+    db.from('dual_support_applications').select('*').eq('company_id',id).order('created_at',{ascending:false}),
+  ]);
+  return {company:co.data,careerUp:cu.data||[],biz:bi.data||[],work:ws.data||[],dual:ds.data||[]};
+}
+
+// ================================================================
+//  モーダル / トースト
+// ================================================================
+function openModal(title,html) {
+  document.getElementById('modal-title').textContent=title;
+  document.getElementById('modal-body').innerHTML=html;
+  document.getElementById('modal-overlay').style.display='block';
+  document.body.style.overflow='hidden';
+}
+function closeModal() { document.getElementById('modal-overlay').style.display='none'; document.body.style.overflow=''; }
+function overlayClick(e) { if(e.target===document.getElementById('modal-overlay'))closeModal(); }
+function toast(msg,type='success') {
+  const t=document.createElement('div');
+  t.className='toast'; t.style.background=type==='error'?'#dc2626':'#16a34a'; t.textContent=msg;
+  document.body.appendChild(t); setTimeout(()=>t.remove(),3000);
+}
+
+// ================================================================
+//  フォーム共通部品
+// ================================================================
+function companySel(sel='',name='company_id') {
+  const opts=(cache?.companies||[]).map(c=>`<option value="${c.id}"${c.id===sel?' selected':''}>${c.name}</option>`).join('');
+  return `<select name="${name}" required style="width:100%;border:1px solid #d1d5db;border-radius:7px;padding:7px 10px;font-size:13px"><option value="">— 会社を選択 —</option>${opts}</select>`;
+}
+function fRow(label,input,hint='',req=false) {
+  return `<div class="form-row"><label>${label}${req?'<span class="req">*</span>':''}</label>${input}${hint?`<div class="hint">${hint}</div>`:''}</div>`;
+}
+function fInput(name,val='',type='text',extra='') { return `<input type="${type}" name="${name}" value="${val||''}" ${extra}>`; }
+function fSelect(name,options,val='') {
+  const opts=options.map(([v,l])=>`<option value="${v}"${v===val?' selected':''}>${l}</option>`).join('');
+  return `<select name="${name}" style="width:100%;border:1px solid #d1d5db;border-radius:7px;padding:7px 10px;font-size:13px">${opts}</select>`;
+}
+function fCheck(name,checked,label) { return `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" name="${name}"${checked?' checked':''}> ${label}</label>`; }
+function fTA(name,val='') { return `<textarea name="${name}" style="width:100%;border:1px solid #d1d5db;border-radius:7px;padding:7px 10px;font-size:13px;min-height:60px;resize:vertical;font-family:inherit">${val||''}</textarea>`; }
+function formActions(isEdit,table,id) {
+  return `<div class="form-actions">
+    ${isEdit?`<button type="button" class="btn-danger" onclick="deleteRecord('${table}','${id}')">🗑 削除</button>`:''}
+    <button type="button" class="btn-cancel" onclick="closeModal()">キャンセル</button>
+    <button type="submit" class="btn-primary">${isEdit?'更新':'登録'}</button>
+  </div>`;
+}
+
+// ================================================================
+//  会社フォーム
+// ================================================================
+function showFormCompany(co=null) {
+  const isEdit=!!co;
+  openModal(isEdit?'会社編集':'会社登録',`
+    <form onsubmit="saveCompany(event,${isEdit?`'${co.id}'`:'null'})">
+      ${fRow('会社名',fInput('name',co?.name),'',true)}
+      ${fRow('規模',fSelect('size_category',[['','—'],['30人未満','30人未満（〜29人）'],['30人以上','30人以上（30人〜）']],co?.size_category||''))}
+      ${fRow('業種',fInput('industry',co?.industry))}
+      ${fRow('備考',fTA('notes',co?.notes))}
+      ${formActions(isEdit,'companies',co?.id)}
+    </form>
+  `);
+}
+async function saveCompany(e,id) {
+  e.preventDefault(); const fd=new FormData(e.target);
+  const data={name:fd.get('name'),size_category:fd.get('size_category')||null,industry:fd.get('industry')||null,notes:fd.get('notes')||null};
+  const {error}=id ? await db.from('companies').update(data).eq('id',id) : await db.from('companies').insert(data);
+  if(error){toast('エラー: '+error.message,'error');return;}
+  toast(id?'会社情報を更新しました':'会社を登録しました'); closeModal(); cache=null; router();
+}
+
+// ================================================================
+//  キャリアアップフォーム
+// ================================================================
+function showFormCu(companyId=null,app=null) {
+  const isEdit=!!app;
+  openModal(isEdit?'キャリアアップ編集':'キャリアアップ 新規登録',`
+    <form onsubmit="saveCu(event,${isEdit?`'${app.id}'`:'null'})">
+      ${fRow('会社',companySel(companyId||app?.company_id||''),  '',true)}
+      <div class="form-grid">
+        ${fRow('従業員名',fInput('employee_name',app?.employee_name),'',true)}
+        ${fRow('給与支給日（日）',fInput('salary_payment_day',app?.salary_payment_day,'number','min="1" max="31"'),'例：25（25日払い）',true)}
+      </div>
+      ${fRow('正社員転換日',fInput('conversion_date',toInputDate(parseDate(app?.conversion_date)),'date'),'',true)}
+      ${fRow('',fCheck('is_priority_worker',app?.is_priority_worker,'重点支援対象者（2回目申請あり）'))}
+      <div class="form-grid">
+        ${fRow('1回目 状況',fSelect('status_first',[['未申請','未申請'],['申請済','申請済'],['承認済','承認済'],['不承認','不承認']],app?.status_first||'未申請'))}
+        ${fRow('2回目 状況',fSelect('status_second',[['','—'],['未申請','未申請'],['申請済','申請済'],['承認済','承認済'],['不承認','不承認']],app?.status_second||''))}
+      </div>
+      ${fRow('備考',fTA('notes',app?.notes))}
+      ${formActions(isEdit,'career_up_applications',app?.id)}
+    </form>
+  `);
+}
+async function saveCu(e,id) {
+  e.preventDefault(); const fd=new FormData(e.target);
+  const data={
+    company_id:fd.get('company_id'), employee_name:fd.get('employee_name'),
+    conversion_date:fd.get('conversion_date')||null, salary_payment_day:parseInt(fd.get('salary_payment_day'))||null,
+    is_priority_worker:fd.get('is_priority_worker')==='on',
+    status_first:fd.get('status_first'), status_second:fd.get('status_second')||null,
+    notes:fd.get('notes')||null,
+  };
+  const {error}=id ? await db.from('career_up_applications').update(data).eq('id',id) : await db.from('career_up_applications').insert(data);
+  if(error){toast('エラー: '+error.message,'error');return;}
+  toast(id?'更新しました':'登録しました'); closeModal(); cache=null; router();
+}
+
+// ================================================================
+//  業務改善フォーム
+// ================================================================
+function showFormBiz(companyId=null,app=null) {
+  const isEdit=!!app;
+  openModal(isEdit?'業務改善 編集':'業務改善 新規登録',`
+    <form onsubmit="saveBiz(event,${isEdit?`'${app.id}'`:'null'})">
+      ${fRow('会社',companySel(companyId||app?.company_id||''),'',true)}
+      <div class="form-grid">
+        ${fRow('コース',fSelect('wage_course',[['','—'],['50円コース','50円コース'],['70円コース','70円コース'],['90円コース','90円コース']],app?.wage_course||''),'令和8年度')}
+        ${fRow('労働者数',fSelect('worker_count',[['','—'],['1人','1人'],['2〜3人','2〜3人'],['4〜5人','4〜5人'],['6〜7人','6〜7人'],['8人以上','8人以上'],['10人以上（特例）','10人以上（特例）']],app?.worker_count||''))}
+      </div>
+      ${fRow('特例区分',fInput('special_category',app?.special_category),'賃金要件・物価高騰等要件など')}
+      ${fRow('設備投資内容',fTA('equipment_description',app?.equipment_description))}
+      <div class="form-grid">
+        ${fRow('交付申請日',fInput('application_date',toInputDate(parseDate(app?.application_date)),'date'))}
+        ${fRow('交付決定日',fInput('decision_date',toInputDate(parseDate(app?.decision_date)),'date'))}
+      </div>
+      ${fRow('事業完了日（実績）',fInput('completion_date_actual',toInputDate(parseDate(app?.completion_date_actual)),'date'),'完了後に入力')}
+      ${fRow('申請状況',fSelect('status',[['未申請','未申請'],['交付申請済','交付申請済'],['交付決定済','交付決定済'],['事業実施中','事業実施中'],['事業完了（報告待）','事業完了（報告待）'],['事業実績報告済','事業実績報告済'],['支給申請済','支給申請済'],['承認済（助成金受領）','承認済（助成金受領）']],app?.status||'未申請'))}
+      ${fRow('備考',fTA('notes',app?.notes))}
+      ${formActions(isEdit,'business_improvement_applications',app?.id)}
+    </form>
+  `);
+}
+async function saveBiz(e,id) {
+  e.preventDefault(); const fd=new FormData(e.target);
+  const data={
+    company_id:fd.get('company_id'), wage_course:fd.get('wage_course')||null,
+    worker_count:fd.get('worker_count')||null, special_category:fd.get('special_category')||null,
+    equipment_description:fd.get('equipment_description')||null,
+    application_date:fd.get('application_date')||null, decision_date:fd.get('decision_date')||null,
+    completion_date_actual:fd.get('completion_date_actual')||null,
+    status:fd.get('status'), notes:fd.get('notes')||null,
+  };
+  const {error}=id ? await db.from('business_improvement_applications').update(data).eq('id',id) : await db.from('business_improvement_applications').insert(data);
+  if(error){toast('エラー: '+error.message,'error');return;}
+  toast(id?'更新しました':'登録しました'); closeModal(); cache=null; router();
+}
+
+// ================================================================
+//  働き方改革フォーム
+// ================================================================
+function showFormWork(companyId=null,app=null) {
+  const isEdit=!!app;
+  openModal(isEdit?'働き方改革 編集':'働き方改革 新規登録',`
+    <form onsubmit="saveWork(event,${isEdit?`'${app.id}'`:'null'})">
+      ${fRow('会社',companySel(companyId||app?.company_id||''),'',true)}
+      ${fRow('成果目標',fInput('goal_type',app?.goal_type),'例：①時間外労働の削減、②③（年休＋インターバル）')}
+      <div class="form-grid">
+        ${fRow('交付申請日',fInput('application_date',toInputDate(parseDate(app?.application_date)),'date'))}
+        ${fRow('事業完了日',fInput('completion_date',toInputDate(parseDate(app?.completion_date)),'date'),'完了後に入力')}
+      </div>
+      <div style="display:flex;gap:20px;margin-bottom:13px">
+        ${fCheck('wage_increase_addon',app?.wage_increase_addon,'賃上げ加算')}
+        ${fCheck('overtime_rate_addon',app?.overtime_rate_addon,'割増賃金率加算')}
+      </div>
+      ${fRow('申請状況',fSelect('status',[['未申請','未申請'],['交付申請済','交付申請済'],['交付決定済','交付決定済'],['事業実施中','事業実施中'],['事業実績報告済','事業実績報告済'],['支給申請済','支給申請済'],['承認済','承認済']],app?.status||'未申請'))}
+      ${fRow('備考',fTA('notes',app?.notes))}
+      ${formActions(isEdit,'work_style_applications',app?.id)}
+    </form>
+  `);
+}
+async function saveWork(e,id) {
+  e.preventDefault(); const fd=new FormData(e.target);
+  const data={
+    company_id:fd.get('company_id'), goal_type:fd.get('goal_type')||null,
+    application_date:fd.get('application_date')||null, completion_date:fd.get('completion_date')||null,
+    wage_increase_addon:fd.get('wage_increase_addon')==='on',
+    overtime_rate_addon:fd.get('overtime_rate_addon')==='on',
+    status:fd.get('status'), notes:fd.get('notes')||null,
+  };
+  const {error}=id ? await db.from('work_style_applications').update(data).eq('id',id) : await db.from('work_style_applications').insert(data);
+  if(error){toast('エラー: '+error.message,'error');return;}
+  toast(id?'更新しました':'登録しました'); closeModal(); cache=null; router();
+}
+
+// ================================================================
+//  両立支援フォーム
+// ================================================================
+const DUAL_COURSES = {
+  '①出生時':   ['出生時両立支援（第1種）'],
+  '②介護':     ['介護離職防止（休業取得時）','介護離職防止（職場復帰時）'],
+  '③育児':     ['育児休業等支援（育休取得時）','育児休業等支援（職場復帰時）'],
+  '④育休代替': ['育休中等業務代替（1ヶ月未満）','育休中等業務代替（1ヶ月以上）'],
+  '⑤柔軟':     ['柔軟な働き方選択制度'],
+  '⑥不妊治療': ['不妊治療両立支援'],
+};
+const DUAL_DATE_LABEL = {
+  '①出生時':   {d1:'育児休業開始日',d2:'育休終了日（起算日）'},
+  '②介護':     {d1:'介護休業開始日',d2:'起算日（取得時:5日達成日 / 復帰時:休業終了日）'},
+  '③育児':     {d1:'計画届提出日 / 育休開始日',d2:'起算日（取得:育休開始 / 復帰:育休終了）'},
+  '④育休代替': {d1:'育休開始日',d2:'育休終了日（起算日）'},
+  '⑤柔軟':     {d1:'対象措置利用開始日（起算日）',d2:null},
+  '⑥不妊治療': {d1:'休暇取得開始日',d2:'5日達成日（起算日）'},
+};
+
+function dualCourseOptions(courseType,selected='') {
+  const courses=DUAL_COURSES[courseType]||[];
+  return courses.map(c=>`<option value="${c}"${c===selected?' selected':''}>${c}</option>`).join('');
+}
+
+function showFormDual(companyId=null,app=null) {
+  const isEdit=!!app;
+  const ct=app?.course_type||'①出生時';
+  const dl=DUAL_DATE_LABEL[ct]||{d1:'日付1',d2:'日付2'};
+  openModal(isEdit?'両立支援 編集':'両立支援 新規登録',`
+    <form onsubmit="saveDual(event,${isEdit?`'${app.id}'`:'null'})">
+      ${fRow('会社',companySel(companyId||app?.company_id||''),'',true)}
+      <div class="form-grid">
+        ${fRow('対象者名',fInput('employee_name',app?.employee_name),'',true)}
+        ${fRow('担当者名',fInput('person_in_charge',app?.person_in_charge))}
+      </div>
+      ${fRow('コース分類',`<select name="course_type" onchange="updateDualForm(this)" style="width:100%;border:1px solid #d1d5db;border-radius:7px;padding:7px 10px;font-size:13px">
+        ${Object.keys(DUAL_COURSES).map(k=>`<option value="${k}"${k===ct?' selected':''}>${k}</option>`).join('')}
+      </select>`,'',true)}
+      ${fRow('具体的コース',`<select name="support_course" id="dual-course-sel" style="width:100%;border:1px solid #d1d5db;border-radius:7px;padding:7px 10px;font-size:13px">
+        ${dualCourseOptions(ct,app?.support_course||'')}
+      </select>`,'',true)}
+      ${fRow(`<span id="dual-d1-label">${dl.d1}</span>`,fInput('date1',toInputDate(parseDate(app?.date1)),'date'))}
+      ${dl.d2?fRow(`<span id="dual-d2-label">${dl.d2}</span>`,fInput('date2',toInputDate(parseDate(app?.date2)),'date')):`<div id="dual-d2-row"></div>`}
+      ${fRow('申請状況',fSelect('status',[['未申請','未申請'],['申請待ち','申請待ち'],['支給申請済','支給申請済'],['承認済','承認済'],['不承認','不承認'],['制度利用中','制度利用中'],['育休中','育休中'],['介護休業中','介護休業中']],app?.status||'未申請'))}
+      ${fRow('進捗メモ',fInput('progress',app?.progress))}
+      ${fRow('備考',fTA('notes',app?.notes))}
+      ${formActions(isEdit,'dual_support_applications',app?.id)}
+    </form>
+  `);
+}
+function updateDualForm(sel) {
+  const ct=sel.value;
+  document.getElementById('dual-course-sel').innerHTML=dualCourseOptions(ct);
+  const dl=DUAL_DATE_LABEL[ct]||{d1:'日付1',d2:'日付2'};
+  const d1l=document.getElementById('dual-d1-label'); if(d1l)d1l.textContent=dl.d1;
+  const d2l=document.getElementById('dual-d2-label'); if(d2l)d2l.textContent=dl.d2||'';
+  const d2r=document.getElementById('dual-d2-row');
+  if(d2r){d2r.innerHTML=dl.d2?fRow(`<span id="dual-d2-label">${dl.d2}</span>`,fInput('date2','','date')):'';}
+}
+async function saveDual(e,id) {
+  e.preventDefault(); const fd=new FormData(e.target);
+  const data={
+    company_id:fd.get('company_id'), employee_name:fd.get('employee_name'),
+    person_in_charge:fd.get('person_in_charge')||null,
+    course_type:fd.get('course_type'), support_course:fd.get('support_course'),
+    date1:fd.get('date1')||null, date2:fd.get('date2')||null,
+    status:fd.get('status'), progress:fd.get('progress')||null, notes:fd.get('notes')||null,
+  };
+  const {error}=id ? await db.from('dual_support_applications').update(data).eq('id',id) : await db.from('dual_support_applications').insert(data);
+  if(error){toast('エラー: '+error.message,'error');return;}
+  toast(id?'更新しました':'登録しました'); closeModal(); cache=null; router();
+}
+
+// ================================================================
+//  削除
+// ================================================================
+async function deleteRecord(table,id) {
+  if(!confirm('このレコードを削除しますか？')) return;
+  const {error}=await db.from(table).delete().eq('id',id);
+  if(error){toast('削除エラー: '+error.message,'error');return;}
+  toast('削除しました'); closeModal(); cache=null; router();
+}
+
+// ================================================================
+//  ダッシュボード
+// ================================================================
+function buildDeadlineItems(data) {
+  const items=[];
+  data.careerUp.forEach(app=>{
+    const d=calcCareerUp(app); const co=app.company?.name||''; const cid=app.company_id;
+    if(d.fd)items.push({type:'career_up',companyName:co,companyId:cid,target:app.employee_name,kind:'1回目 申請期限',deadline:d.fd,days:d.fDays,status:app.status_first});
+    if(d.sd)items.push({type:'career_up',companyName:co,companyId:cid,target:app.employee_name,kind:'2回目 申請期限',deadline:d.sd,days:d.sDays,status:app.status_second});
+  });
+  data.biz.forEach(app=>{
+    const d=calcBiz(app); const co=app.company?.name||''; const cid=app.company_id;
+    if(d.compDays!==null)items.push({type:'biz',companyName:co,companyId:cid,target:null,kind:'事業完了期限',deadline:d.compLimit,days:d.compDays,status:app.status});
+    if(d.supLimit)items.push({type:'biz',companyName:co,companyId:cid,target:null,kind:'支給申請期限',deadline:d.supLimit,days:d.supDays,status:app.status});
+  });
+  data.work.forEach(app=>{
+    const d=calcWork(app); const co=app.company?.name||''; const cid=app.company_id;
+    if(d.appDays!==null)items.push({type:'work',companyName:co,companyId:cid,target:null,kind:'交付申請期限',deadline:d.appLimit,days:d.appDays,status:app.status});
+    if(d.supLimit)items.push({type:'work',companyName:co,companyId:cid,target:null,kind:'支給申請期限',deadline:d.supLimit,days:d.supDays,status:app.status});
+  });
+  data.dual.forEach(app=>{
+    const d=calcDual(app); const co=app.company?.name||''; const cid=app.company_id;
+    if(d.deadline&&d.days!==undefined)items.push({type:'dual',companyName:co,companyId:cid,target:app.employee_name,kind:`支給申請期限 (${app.support_course})`,deadline:d.deadline,days:d.days,status:app.status});
+  });
+  return items.sort((a,b)=>(a.days??99999)-(b.days??99999));
+}
+
+function renderDashboard(data) {
+  const items=buildDeadlineItems(data);
+  const overdue=items.filter(i=>i.days!==null&&i.days<0).length;
+  const urgent =items.filter(i=>i.days!==null&&i.days>=0&&i.days<=7).length;
+  const soon   =items.filter(i=>i.days!==null&&i.days>7&&i.days<=30).length;
+  const ok     =items.filter(i=>i.days===null||i.days>30).length;
+  const todayStr=new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'short'});
+
+  const cards=[
+    {label:'期限切れ',count:overdue,bg:'#fee2e2',border:'#fca5a5',text:'#991b1b',em:'🔴'},
+    {label:'残7日以内',count:urgent,bg:'#ffedd5',border:'#fdba74',text:'#9a3412',em:'🟠'},
+    {label:'残30日以内',count:soon,bg:'#fef9c3',border:'#fde047',text:'#713f12',em:'🟡'},
+    {label:'余裕あり',count:ok,bg:'#dcfce7',border:'#86efac',text:'#14532d',em:'🟢'},
+  ].map(c=>`<div style="background:${c.bg};border:1px solid ${c.border};color:${c.text};border-radius:12px;padding:14px 16px">
+    <div style="font-size:12px;font-weight:500;margin-bottom:4px">${c.em} ${c.label}</div>
+    <div style="font-size:28px;font-weight:700">${c.count}</div>
+    <div style="font-size:11px;opacity:0.7">件</div>
+  </div>`).join('');
+
+  const rows=items.map(item=>{
+    const rowBg=item.days===null?'':item.days<0?'background:#fff5f5':item.days<=7?'background:#fff8f0':item.days<=30?'background:#fefce8':'';
+    return `<tr style="${rowBg}">
+      <td><span class="stbadge" style="${TYPE_STYLE[item.type]}">${TYPE_LABEL[item.type]}</span></td>
+      <td><a href="#company/${item.companyId}">${item.companyName}</a></td>
+      <td style="color:#6b7280">${item.target||'—'}</td>
+      <td style="color:#6b7280;font-size:12px">${item.kind}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(item.deadline)}</td>
+      <td>${deadlineBadge(item.days)}</td>
+      <td>${stBadge(item.status)}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px">
+      <h1 style="font-size:18px;font-weight:700;color:#111827">📊 ダッシュボード</h1>
+      <span style="font-size:12px;color:#9ca3af">${todayStr}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">${cards}</div>
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span>⚠️ 要対応期限一覧</span><span style="font-size:12px;color:#6b7280">${items.length} 件</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>助成金</th><th>会社名</th><th>対象者</th><th>期限種別</th><th>期限日</th><th>残日数</th><th>申請状況</th></tr></thead>
+          <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ================================================================
+//  会社一覧
+// ================================================================
+function renderCompanies(data,query) {
+  let companies=data.companies;
+  if(query) companies=companies.filter(c=>c.name.includes(query));
+  const cnt={};
+  const inc=(k,id)=>{if(!cnt[id])cnt[id]={cu:0,bi:0,ws:0,ds:0};cnt[id][k]++;};
+  data.careerUp.forEach(a=>inc('cu',a.company_id));
+  data.biz.forEach(a=>inc('bi',a.company_id));
+  data.work.forEach(a=>inc('ws',a.company_id));
+  data.dual.forEach(a=>inc('ds',a.company_id));
+  const rows=companies.map(co=>{
+    const c=cnt[co.id]||{cu:0,bi:0,ws:0,ds:0};
+    return `<tr>
+      <td><a href="#company/${co.id}">${co.name}</a></td>
+      <td style="font-size:12px;color:#6b7280">${co.size_category||'—'}</td>
+      <td style="text-align:center">${c.cu?`<span style="color:#5b21b6;font-weight:600">${c.cu}件</span>`:'<span style="color:#d1d5db">—</span>'}</td>
+      <td style="text-align:center">${c.bi?`<span style="color:#1e40af;font-weight:600">${c.bi}件</span>`:'<span style="color:#d1d5db">—</span>'}</td>
+      <td style="text-align:center">${c.ws?`<span style="color:#0f766e;font-weight:600">${c.ws}件</span>`:'<span style="color:#d1d5db">—</span>'}</td>
+      <td style="text-align:center">${c.ds?`<span style="color:#9d174d;font-weight:600">${c.ds}件</span>`:'<span style="color:#d1d5db">—</span>'}</td>
+      <td><button class="btn-edit" onclick="showFormCompany(${JSON.stringify(co).replace(/"/g,'&quot;')})">✏️</button></td>
+    </tr>`;
+  }).join('');
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h1 style="font-size:18px;font-weight:700;color:#111827">🏢 会社一覧</h1>
+      <button class="btn-add" onclick="showFormCompany()">＋ 会社登録</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input id="search-input" type="text" placeholder="会社名で絞り込み..." value="${query}"
+        style="flex:1;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px"
+        onkeydown="if(event.key==='Enter')doSearch()">
+      <button onclick="doSearch()" style="padding:8px 16px;background:#2563eb;color:white;border-radius:8px;font-size:13px;cursor:pointer;border:none">検索</button>
+      ${query?`<button onclick="clearSearch()" style="padding:8px 12px;background:#f3f4f6;color:#374151;border-radius:8px;font-size:13px;cursor:pointer;border:none">クリア</button>`:''}
+    </div>
+    ${query?`<p style="font-size:13px;color:#6b7280;margin-bottom:10px">「${query}」の検索結果: ${companies.length} 件</p>`:''}
+    <div class="card">
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>会社名</th><th>規模</th>
+            <th style="text-align:center;color:#5b21b6">キャリアアップ</th>
+            <th style="text-align:center;color:#1e40af">業務改善</th>
+            <th style="text-align:center;color:#0f766e">働き方改革</th>
+            <th style="text-align:center;color:#9d174d">両立支援</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:24px">会社が登録されていません</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ================================================================
+//  会社詳細
+// ================================================================
+function renderCompanyDetail(det) {
+  const {company,careerUp,biz,work,dual}=det;
+  if(!company) return '<div style="text-align:center;padding:40px;color:#9ca3af">会社が見つかりません</div>';
+  const total=careerUp.length+biz.length+work.length+dual.length;
+  const cid=company.id;
+  return `
+    <div style="font-size:12px;color:#9ca3af;margin-bottom:10px">
+      <a href="#companies" style="color:#6b7280">会社一覧</a> <span style="margin:0 6px">/</span> <span style="color:#374151">${company.name}</span>
+    </div>
+    <div class="card" style="padding:14px;margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <h1 style="font-size:18px;font-weight:700;color:#111827">${company.name}</h1>
+          <div style="font-size:13px;color:#6b7280;margin-top:4px;display:flex;gap:16px">
+            ${company.size_category?`<span>規模: ${company.size_category}</span>`:''}
+            ${company.industry?`<span>業種: ${company.industry}</span>`:''}
+            <span>申請合計: ${total} 件</span>
+          </div>
+          ${company.notes?`<div style="font-size:12px;color:#6b7280;margin-top:8px;background:#f9fafb;padding:6px 10px;border-radius:6px">📝 ${company.notes}</div>`:''}
+        </div>
+        <button class="btn-edit" onclick="showFormCompany(${JSON.stringify(company).replace(/"/g,'&quot;')})" title="会社情報を編集">✏️ 編集</button>
+      </div>
+    </div>
+    ${renderCuSection(careerUp,cid)}
+    ${renderBizSection(biz,cid)}
+    ${renderWorkSection(work,cid)}
+    ${renderDualSection(dual,cid)}
+    ${total===0?'<div style="text-align:center;padding:40px;color:#9ca3af">この会社の申請データがありません</div>':''}`;
+}
+
+function sectionCard(color,title,addFn,inner) {
+  const C={purple:{bg:'#f5f3ff',border:'#ddd6fe',text:'#5b21b6',btn:'#7c3aed'},blue:{bg:'#eff6ff',border:'#bfdbfe',text:'#1e40af',btn:'#2563eb'},teal:{bg:'#f0fdfa',border:'#99f6e4',text:'#0f766e',btn:'#0f766e'},pink:{bg:'#fdf2f8',border:'#fbcfe8',text:'#9d174d',btn:'#9d174d'}}[color];
+  return `<div class="card">
+    <div style="padding:9px 14px;border-bottom:1px solid ${C.border};background:${C.bg};display:flex;justify-content:space-between;align-items:center">
+      <span style="color:${C.text};font-weight:600;font-size:13px">${title}</span>
+      <button onclick="${addFn}" style="background:${C.btn};color:white;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer">＋ 登録</button>
+    </div>
+    <div style="overflow-x:auto">${inner}</div>
+  </div>`;
+}
+
+function renderCuSection(apps,companyId=null) {
+  const rows=apps.map(app=>{
+    const d=calcCareerUp(app);
+    const esc=JSON.stringify(app).replace(/"/g,'&quot;');
+    return `<tr>
+      <td style="font-weight:500">${app.employee_name}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.conversion_date))}</td>
+      <td style="text-align:center">${app.is_priority_worker?'✓':'—'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.fd)}</td>
+      <td>${deadlineBadge(d.fDays)}</td>
+      <td>${stBadge(app.status_first)}</td>
+      <td style="font-family:monospace;font-size:12px">${app.is_priority_worker?fmt(d.sd):'—'}</td>
+      <td>${app.is_priority_worker?deadlineBadge(d.sDays):'—'}</td>
+      <td>${app.is_priority_worker?stBadge(app.status_second):'—'}</td>
+      <td><button class="btn-edit" onclick='showFormCu(null,${esc})'>✏️</button></td>
+    </tr>`;
+  }).join('');
+  return sectionCard('purple','👔 キャリアアップ助成金（正社員化コース）',`showFormCu('${companyId}')`,`
+    <table><thead><tr>
+      <th>従業員名</th><th>転換日</th><th>重点</th>
+      <th>1回目 申請期限</th><th>1回目 残日数</th><th>1回目 状況</th>
+      <th>2回目 申請期限</th><th>2回目 残日数</th><th>2回目 状況</th><th></th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+}
+
+function renderBizSection(apps,companyId=null) {
+  const rows=apps.map(app=>{
+    const d=calcBiz(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
+    return `<tr>
+      <td>${app.wage_course||'—'}</td>
+      <td>${app.worker_count||'—'}</td>
+      <td style="font-size:12px;color:#4b5563;max-width:160px;overflow:hidden;text-overflow:ellipsis">${app.equipment_description||'—'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.compLimit)}</td>
+      <td>${deadlineBadge(d.compDays)}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
+      <td>${deadlineBadge(d.supDays)}</td>
+      <td>${stBadge(app.status)}</td>
+      <td><button class="btn-edit" onclick='showFormBiz(null,${esc})'>✏️</button></td>
+    </tr>`;
+  }).join('');
+  return sectionCard('blue','🏭 業務改善助成金（令和8年度: 50/70/90円コース）',`showFormBiz('${companyId}')`,`
+    <table><thead><tr>
+      <th>コース</th><th>人数</th><th>設備投資</th>
+      <th>事業完了期限</th><th>完了残日数</th>
+      <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+}
+
+function renderWorkSection(apps,companyId=null) {
+  const rows=apps.map(app=>{
+    const d=calcWork(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
+    return `<tr>
+      <td style="font-size:12px">${app.goal_type||'—'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.application_date))}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.appLimit)}</td>
+      <td>${d.appDays!==null?deadlineBadge(d.appDays):'<span class="badge badge-gray">済</span>'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
+      <td>${deadlineBadge(d.supDays)}</td>
+      <td>${stBadge(app.status)}</td>
+      <td><button class="btn-edit" onclick='showFormWork(null,${esc})'>✏️</button></td>
+    </tr>`;
+  }).join('');
+  return sectionCard('teal','⏰ 働き方改革推進支援助成金（令和8年度）',`showFormWork('${companyId}')`,`
+    <table><thead><tr>
+      <th>成果目標</th><th>交付申請日</th><th>申請期限</th><th>申請残日数</th>
+      <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+}
+
+function renderDualSection(apps,companyId=null) {
+  const rows=apps.map(app=>{
+    const d=calcDual(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
+    return `<tr>
+      <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
+      <td style="font-size:12px;white-space:nowrap">${app.support_course}</td>
+      <td style="font-weight:500">${app.employee_name}</td>
+      <td style="font-size:12px;color:#6b7280">${app.person_in_charge||'—'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.base)}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.appStart)}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
+      <td>${deadlineBadge(d.days)}</td>
+      <td>${stBadge(app.status)}</td>
+      <td><button class="btn-edit" onclick='showFormDual(null,${esc})'>✏️</button></td>
+    </tr>`;
+  }).join('');
+  return sectionCard('pink','👶 両立支援等助成金（6コース）',`showFormDual('${companyId}')`,`
+    <table><thead><tr>
+      <th>分類</th><th>コース</th><th>対象者</th><th>担当</th>
+      <th>起算日</th><th>申請可能日</th><th>申請期限</th><th>残日数</th><th>状況</th><th></th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+}
+
+// ================================================================
+//  助成金別 全件ページ
+// ================================================================
+function addBtn(fn,label) { return `<button class="btn-add" onclick="${fn}">＋ ${label}</button>`; }
+
+function renderAllCareerUp(apps,companies) {
+  const coMap=Object.fromEntries(companies.map(c=>[c.id,c]));
+  const rows=apps.map(app=>{
+    const co=coMap[app.company_id]; const d=calcCareerUp(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
+    return `<tr>
+      <td><a href="#company/${app.company_id}">${co?.name||'—'}</a></td>
+      <td style="font-weight:500">${app.employee_name}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.conversion_date))}</td>
+      <td style="text-align:center">${app.is_priority_worker?'✓':'—'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.fd)}</td>
+      <td>${deadlineBadge(d.fDays)}</td>
+      <td>${stBadge(app.status_first)}</td>
+      <td style="font-family:monospace;font-size:12px">${app.is_priority_worker?fmt(d.sd):'—'}</td>
+      <td>${app.is_priority_worker?deadlineBadge(d.sDays):'—'}</td>
+      <td>${app.is_priority_worker?stBadge(app.status_second):'—'}</td>
+      <td><button class="btn-edit" onclick='showFormCu(null,${esc})'>✏️</button></td>
+    </tr>`;
+  }).join('');
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h1 style="font-size:18px;font-weight:700;color:#111827">👔 キャリアアップ助成金 — 全件</h1>
+    ${addBtn('showFormCu()','新規登録')}
+  </div>
+  <div class="card"><div style="overflow-x:auto"><table>
+    <thead><tr><th>会社名</th><th>従業員名</th><th>転換日</th><th>重点</th>
+    <th>1回目期限</th><th>1回目残日数</th><th>1回目状況</th>
+    <th>2回目期限</th><th>2回目残日数</th><th>2回目状況</th><th></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+  </table></div></div>`;
+}
+
+function renderAllBiz(apps,companies) {
+  const coMap=Object.fromEntries(companies.map(c=>[c.id,c]));
+  const rows=apps.map(app=>{
+    const co=coMap[app.company_id]; const d=calcBiz(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
+    return `<tr>
+      <td><a href="#company/${app.company_id}">${co?.name||'—'}</a></td>
+      <td>${app.wage_course||'—'}</td><td>${app.worker_count||'—'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.compLimit)}</td>
+      <td>${deadlineBadge(d.compDays)}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
+      <td>${deadlineBadge(d.supDays)}</td>
+      <td>${stBadge(app.status)}</td>
+      <td><button class="btn-edit" onclick='showFormBiz(null,${esc})'>✏️</button></td>
+    </tr>`;
+  }).join('');
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h1 style="font-size:18px;font-weight:700;color:#111827">🏭 業務改善助成金 — 全件</h1>
+    ${addBtn('showFormBiz()','新規登録')}
+  </div>
+  <div class="card"><div style="overflow-x:auto"><table>
+    <thead><tr><th>会社名</th><th>コース</th><th>人数</th>
+    <th>事業完了期限</th><th>完了残日数</th><th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+  </table></div></div>`;
+}
+
+function renderAllWork(apps,companies) {
+  const coMap=Object.fromEntries(companies.map(c=>[c.id,c]));
+  const rows=apps.map(app=>{
+    const co=coMap[app.company_id]; const d=calcWork(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
+    return `<tr>
+      <td><a href="#company/${app.company_id}">${co?.name||'—'}</a></td>
+      <td style="font-size:12px">${app.goal_type||'—'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.application_date))}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.appLimit)}</td>
+      <td>${d.appDays!==null?deadlineBadge(d.appDays):'<span class="badge badge-gray">済</span>'}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
+      <td>${deadlineBadge(d.supDays)}</td>
+      <td>${stBadge(app.status)}</td>
+      <td><button class="btn-edit" onclick='showFormWork(null,${esc})'>✏️</button></td>
+    </tr>`;
+  }).join('');
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h1 style="font-size:18px;font-weight:700;color:#111827">⏰ 働き方改革推進支援助成金 — 全件</h1>
+    ${addBtn('showFormWork()','新規登録')}
+  </div>
+  <div class="card"><div style="overflow-x:auto"><table>
+    <thead><tr><th>会社名</th><th>成果目標</th><th>交付申請日</th>
+    <th>申請期限</th><th>申請残日数</th><th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+  </table></div></div>`;
+}
+
+function renderAllDual(apps,companies) {
+  const coMap=Object.fromEntries(companies.map(c=>[c.id,c]));
+  const rows=apps.map(app=>{
+    const co=coMap[app.company_id]; const d=calcDual(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
+    return `<tr>
+      <td><a href="#company/${app.company_id}">${co?.name||'—'}</a></td>
+      <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
+      <td style="font-size:12px;white-space:nowrap">${app.support_course}</td>
+      <td style="font-weight:500">${app.employee_name}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.base)}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.appStart)}</td>
+      <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
+      <td>${deadlineBadge(d.days)}</td>
+      <td>${stBadge(app.status)}</td>
+      <td><button class="btn-edit" onclick='showFormDual(null,${esc})'>✏️</button></td>
+    </tr>`;
+  }).join('');
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h1 style="font-size:18px;font-weight:700;color:#111827">👶 両立支援等助成金 — 全件</h1>
+    ${addBtn('showFormDual()','新規登録')}
+  </div>
+  <div class="card"><div style="overflow-x:auto"><table>
+    <thead><tr><th>会社名</th><th>分類</th><th>コース</th><th>対象者</th>
+    <th>起算日</th><th>申請可能日</th><th>申請期限</th><th>残日数</th><th>状況</th><th></th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+  </table></div></div>`;
+}
+
+// ================================================================
+//  検索
+// ================================================================
+function doSearch() { const q=(document.getElementById('search-input')?.value||'').trim(); location.hash=q?`#companies?q=${encodeURIComponent(q)}`:'#companies'; }
+function clearSearch() { location.hash='#companies'; }
+
+// ================================================================
+//  キャッシュ & ルーター
+// ================================================================
+let cache=null;
+async function getData() { if(!cache)cache=await fetchAll(); return cache; }
+
+async function router() {
+  const hash=location.hash||'#dashboard';
+  const content=document.getElementById('content');
+
+  document.querySelectorAll('.nav-tab').forEach(tab=>{
+    const href=tab.getAttribute('href');
+    tab.classList.toggle('active',
+      (hash==='#dashboard'&&href==='#dashboard')||(hash.startsWith('#companies')&&href==='#companies')||
+      (hash==='#career-up'&&href==='#career-up')||(hash==='#biz'&&href==='#biz')||
+      (hash==='#work'&&href==='#work')||(hash==='#dual'&&href==='#dual')||
+      (hash.startsWith('#company/')&&href==='#companies')
+    );
+  });
+
+  content.innerHTML='<div style="text-align:center;padding:60px;color:#9ca3af">読み込み中...</div>';
+  try {
+    if(hash.startsWith('#company/')) {
+      const id=decodeURIComponent(hash.slice('#company/'.length));
+      const det=await fetchCompanyDetail(id);
+      // キャッシュに会社情報を持っておく
+      if(!cache){cache=await fetchAll();}
+      content.innerHTML=renderCompanyDetail(det);
+      return;
+    }
+    const data=await getData();
+    if(hash.startsWith('#companies')) {
+      const qs=hash.includes('?')?hash.split('?')[1]:'';
+      const q=qs?decodeURIComponent(new URLSearchParams(qs).get('q')||''):'';
+      content.innerHTML=renderCompanies(data,q); return;
+    }
+    if(hash==='#career-up'){content.innerHTML=renderAllCareerUp(data.careerUp,data.companies);return;}
+    if(hash==='#biz')      {content.innerHTML=renderAllBiz(data.biz,data.companies);return;}
+    if(hash==='#work')     {content.innerHTML=renderAllWork(data.work,data.companies);return;}
+    if(hash==='#dual')     {content.innerHTML=renderAllDual(data.dual,data.companies);return;}
+    content.innerHTML=renderDashboard(data);
+  } catch(err) {
+    content.innerHTML=`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:18px;color:#991b1b">
+      <strong>エラー</strong><br><span style="font-size:13px">${err.message}</span>
+    </div>`;
+  }
+}
+
+window.addEventListener('hashchange',router);
+if(!location.hash||location.hash==='#')location.hash='#dashboard';
+router();
+</script>
+</body>
+</html>
