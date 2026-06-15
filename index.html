@@ -69,6 +69,26 @@
 
     @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     input[type=text]:focus,input[type=date]:focus,input[type=number]:focus { outline:2px solid #60a5fa; }
+
+    /* Tabs */
+    .tab-bar { display:flex;border-bottom:2px solid #e5e7eb;margin-bottom:20px;gap:0; }
+    .tab-btn { background:none;border:none;padding:10px 18px;font-size:13px;font-weight:500;cursor:pointer;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;display:flex;align-items:center;gap:6px;white-space:nowrap; }
+    .tab-btn:hover { color:#374151; }
+    .tab-btn.active { color:#2563eb;border-bottom-color:#2563eb; }
+    .tab-count { background:#e5e7eb;color:#6b7280;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:600; }
+    .tab-btn.active .tab-count { background:#dbeafe;color:#1e40af; }
+
+    /* Timeline */
+    .tl-year { text-align:center;margin:20px 0 12px;position:relative; }
+    .tl-year::before { content:'';position:absolute;top:50%;left:0;right:0;height:1px;background:#e5e7eb; }
+    .tl-year span { background:#f9fafb;padding:0 12px;font-size:12px;font-weight:700;color:#6b7280;position:relative;z-index:1; }
+    .tl-item { display:flex;gap:12px;margin-bottom:10px;align-items:flex-start; }
+    .tl-date { width:76px;flex-shrink:0;text-align:right;font-family:monospace;font-size:11px;color:#9ca3af;padding-top:10px; }
+    .tl-line { width:16px;flex-shrink:0;display:flex;flex-direction:column;align-items:center; }
+    .tl-dot { width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:8px; }
+    .tl-vline { width:2px;background:#e5e7eb;flex:1;min-height:20px;margin-top:2px; }
+    .tl-body { flex:1;background:white;border:1px solid #e5e7eb;border-radius:10px;padding:9px 13px;min-width:0; }
+    .tl-note { border-left:3px solid #9ca3af; }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col">
@@ -212,14 +232,15 @@ async function fetchAll() {
   return { careerUp:cu.data||[], biz:bi.data||[], work:ws.data||[], dual:ds.data||[], companies:co.data||[] };
 }
 async function fetchCompanyDetail(id) {
-  const [co,cu,bi,ws,ds]=await Promise.all([
+  const [co,cu,bi,ws,ds,nt]=await Promise.all([
     db.from('companies').select('*').eq('id',id).single(),
     db.from('career_up_applications').select('*').eq('company_id',id).order('created_at',{ascending:false}),
     db.from('business_improvement_applications').select('*').eq('company_id',id).order('created_at',{ascending:false}),
     db.from('work_style_applications').select('*').eq('company_id',id).order('created_at',{ascending:false}),
     db.from('dual_support_applications').select('*').eq('company_id',id).order('created_at',{ascending:false}),
+    db.from('company_notes').select('*').eq('company_id',id).order('note_date',{ascending:false}),
   ]);
-  return {company:co.data,careerUp:cu.data||[],biz:bi.data||[],work:ws.data||[],dual:ds.data||[]};
+  return {company:co.data,careerUp:cu.data||[],biz:bi.data||[],work:ws.data||[],dual:ds.data||[],notes:nt.data||[]};
 }
 
 // ================================================================
@@ -283,7 +304,10 @@ async function saveCompany(e,id) {
   e.preventDefault(); const fd=new FormData(e.target);
   const data={name:fd.get('name'),size_category:fd.get('size_category')||null,industry:fd.get('industry')||null,notes:fd.get('notes')||null};
   const {error}=id ? await db.from('companies').update(data).eq('id',id) : await db.from('companies').insert(data);
-  if(error){toast('エラー: '+error.message,'error');return;}
+  if(error){
+    const msg=error.code==='23505'?'この会社名はすでに登録されています':'エラー: '+error.message;
+    toast(msg,'error'); return;
+  }
   toast(id?'会社情報を更新しました':'会社を登録しました'); closeModal(); cache=null; router();
 }
 
@@ -476,6 +500,107 @@ async function saveDual(e,id) {
 }
 
 // ================================================================
+//  メモ（company_notes）CRUD
+// ================================================================
+function showFormNote(companyId,note=null) {
+  const isEdit=!!note;
+  const today=new Date().toISOString().slice(0,10);
+  openModal(isEdit?'メモ編集':'メモ追加',`
+    <form onsubmit="saveNote(event,'${companyId}',${isEdit?`'${note.id}'`:'null'})">
+      ${fRow('日付',fInput('note_date',note?.note_date||today,'date'),'',true)}
+      ${fRow('内容',fTA('content',note?.content),'',true)}
+      ${fRow('担当者',fInput('author',note?.author))}
+      ${fRow('関連助成金',fSelect('subsidy_type',[['','—'],['career_up','👔 キャリアアップ'],['biz','🏭 業務改善'],['work','⏰ 働き方改革'],['dual','👶 両立支援']],note?.subsidy_type||''))}
+      ${formActions(isEdit,'company_notes',note?.id)}
+    </form>
+  `);
+}
+async function saveNote(e,companyId,id) {
+  e.preventDefault(); const fd=new FormData(e.target);
+  const data={company_id:companyId,note_date:fd.get('note_date'),content:fd.get('content'),author:fd.get('author')||null,subsidy_type:fd.get('subsidy_type')||null};
+  const {error}=id ? await db.from('company_notes').update(data).eq('id',id) : await db.from('company_notes').insert(data);
+  if(error){toast('エラー: '+error.message,'error');return;}
+  toast(id?'更新しました':'メモを追加しました'); closeModal();
+  history.replaceState(null,'',`#company/${companyId}/history`);
+  await refreshCompanyPage(companyId,'history');
+}
+
+async function refreshCompanyPage(companyId,tab) {
+  const content=document.getElementById('content');
+  const det=await fetchCompanyDetail(companyId);
+  if(!cache) cache=await fetchAll();
+  content.innerHTML=renderCompanyDetail(det,tab);
+}
+
+// ================================================================
+//  タイムライン構築
+// ================================================================
+function buildTimeline(det,notes) {
+  const evs=[];
+  const push=(date,type,icon,label,detail,status,extra={})=>{
+    if(!date) return;
+    evs.push({date,type,icon,label,detail,status,...extra});
+  };
+  det.careerUp.forEach(a=>{
+    push(a.conversion_date,'career_up','👔','正社員転換',a.employee_name,a.status_first);
+  });
+  det.biz.forEach(a=>{
+    const d=a.wage_course||'業務改善';
+    push(a.application_date,'biz','🏭','交付申請',d,a.status);
+    push(a.decision_date,'biz','🏭','交付決定',d,a.status);
+    push(a.completion_date_actual,'biz','🏭','事業完了',d,a.status);
+  });
+  det.work.forEach(a=>{
+    const d=a.goal_type||'働き方改革';
+    push(a.application_date,'work','⏰','交付申請',d,a.status);
+    push(a.completion_date,'work','⏰','事業完了',d,a.status);
+  });
+  det.dual.forEach(a=>{
+    const d=`${a.employee_name}（${a.support_course}）`;
+    push(a.date1,'dual','👶','開始日',d,a.status);
+    push(a.date2,'dual','👶','起算日',d,a.status);
+    push(a.application_date,'dual','👶','支給申請',d,a.status);
+  });
+  (notes||[]).forEach(n=>{
+    evs.push({date:n.note_date,type:'note',icon:'📝',label:n.content,detail:n.author||'',status:null,noteObj:n,companyId:n.company_id});
+  });
+  return evs.sort((a,b)=>new Date(b.date)-new Date(a.date));
+}
+
+function renderTimeline(events,companyId) {
+  if(!events.length) return `<div style="text-align:center;padding:40px;color:#9ca3af">イベントがありません</div>`;
+  const DOT={career_up:'#7c3aed',biz:'#2563eb',work:'#0f766e',dual:'#9d174d',note:'#9ca3af'};
+  let html=''; let curYear=null;
+  events.forEach(ev=>{
+    const d=parseDate(ev.date); if(!d)return;
+    const yr=d.getFullYear();
+    if(yr!==curYear){
+      html+=`<div class="tl-year"><span>${yr}年</span></div>`;
+      curYear=yr;
+    }
+    const isNote=ev.type==='note';
+    const esc=isNote?JSON.stringify(ev.noteObj||{}).replace(/"/g,'&quot;'):'';
+    const body=isNote
+      ?`<div style="font-size:13px;color:#374151;word-break:break-all">${ev.label}</div>
+         ${ev.detail?`<div style="font-size:11px;color:#9ca3af;margin-top:3px">担当: ${ev.detail}</div>`:''}
+         ${ev.noteObj?.subsidy_type?`<span class="stbadge" style="${TYPE_STYLE[ev.noteObj.subsidy_type]};font-size:10px;margin-top:4px;display:inline-flex">${TYPE_LABEL[ev.noteObj.subsidy_type]}</span>`:''}
+         <button class="btn-edit" onclick='showFormNote("${companyId}",${esc})' style="float:right;margin-top:-22px">✏️</button>`
+      :`<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+           <span class="stbadge" style="${TYPE_STYLE[ev.type]};font-size:10px">${TYPE_LABEL[ev.type]}</span>
+           <span style="font-weight:600;font-size:13px">${ev.label}</span>
+         </div>
+         <div style="font-size:12px;color:#6b7280">${ev.detail}</div>
+         ${ev.status?`<div style="margin-top:4px">${stBadge(ev.status)}</div>`:''}`;
+    html+=`<div class="tl-item">
+      <div class="tl-date">${fmt(d)}</div>
+      <div class="tl-line"><div class="tl-dot" style="background:${DOT[ev.type]||'#9ca3af'}"></div><div class="tl-vline"></div></div>
+      <div class="tl-body${isNote?' tl-note':''}">${body}</div>
+    </div>`;
+  });
+  return html;
+}
+
+// ================================================================
 //  削除
 // ================================================================
 async function deleteRecord(table,id) {
@@ -618,36 +743,74 @@ function renderCompanies(data,query) {
 }
 
 // ================================================================
-//  会社詳細
+//  会社詳細（タブ付き）
 // ================================================================
-function renderCompanyDetail(det) {
-  const {company,careerUp,biz,work,dual}=det;
+function renderCompanyDetail(det,activeTab='history') {
+  const {company,careerUp,biz,work,dual,notes}=det;
   if(!company) return '<div style="text-align:center;padding:40px;color:#9ca3af">会社が見つかりません</div>';
   const total=careerUp.length+biz.length+work.length+dual.length;
   const cid=company.id;
+  const timeline=buildTimeline(det,notes||[]);
+  const tlCount=timeline.length;
+  const showHistory=activeTab==='history';
+
   return `
     <div style="font-size:12px;color:#9ca3af;margin-bottom:10px">
       <a href="#companies" style="color:#6b7280">会社一覧</a> <span style="margin:0 6px">/</span> <span style="color:#374151">${company.name}</span>
     </div>
-    <div class="card" style="padding:14px;margin-bottom:20px">
+    <div class="card" style="padding:14px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
           <h1 style="font-size:18px;font-weight:700;color:#111827">${company.name}</h1>
-          <div style="font-size:13px;color:#6b7280;margin-top:4px;display:flex;gap:16px">
+          <div style="font-size:13px;color:#6b7280;margin-top:4px;display:flex;gap:16px;flex-wrap:wrap">
             ${company.size_category?`<span>規模: ${company.size_category}</span>`:''}
             ${company.industry?`<span>業種: ${company.industry}</span>`:''}
-            <span>申請合計: ${total} 件</span>
+            <span>申請: ${total}件</span>
+            <span>メモ: ${(notes||[]).length}件</span>
           </div>
-          ${company.notes?`<div style="font-size:12px;color:#6b7280;margin-top:8px;background:#f9fafb;padding:6px 10px;border-radius:6px">📝 ${company.notes}</div>`:''}
+          ${company.notes?`<div style="font-size:12px;color:#6b7280;margin-top:8px;background:#f9fafb;padding:6px 10px;border-radius:6px">${company.notes}</div>`:''}
         </div>
-        <button class="btn-edit" onclick="showFormCompany(${JSON.stringify(company).replace(/"/g,'&quot;')})" title="会社情報を編集">✏️ 編集</button>
+        <button class="btn-edit" onclick="showFormCompany(${JSON.stringify(company).replace(/"/g,'&quot;')})" title="会社情報を編集">✏️</button>
       </div>
     </div>
-    ${renderCuSection(careerUp,cid)}
-    ${renderBizSection(biz,cid)}
-    ${renderWorkSection(work,cid)}
-    ${renderDualSection(dual,cid)}
-    ${total===0?'<div style="text-align:center;padding:40px;color:#9ca3af">この会社の申請データがありません</div>':''}`;
+
+    <!-- タブ -->
+    <div class="tab-bar">
+      <button class="tab-btn${showHistory?' active':''}" onclick="switchDetailTab('history','${cid}')">
+        📅 履歴タイムライン <span class="tab-count">${tlCount}</span>
+      </button>
+      <button class="tab-btn${!showHistory?' active':''}" onclick="switchDetailTab('status','${cid}')">
+        📋 申請状況 <span class="tab-count">${total}</span>
+      </button>
+    </div>
+
+    <!-- 履歴タブ -->
+    <div id="tab-history" style="display:${showHistory?'block':'none'}">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+        <button class="btn-add" onclick="showFormNote('${cid}')">＋ メモ追加</button>
+      </div>
+      <div style="max-width:680px">
+        ${renderTimeline(timeline,cid)}
+      </div>
+    </div>
+
+    <!-- 申請状況タブ -->
+    <div id="tab-status" style="display:${!showHistory?'block':'none'}">
+      ${renderCuSection(careerUp,cid)}
+      ${renderBizSection(biz,cid)}
+      ${renderWorkSection(work,cid)}
+      ${renderDualSection(dual,cid)}
+      ${total===0?'<div style="text-align:center;padding:40px;color:#9ca3af">この会社の申請データがありません</div>':''}
+    </div>`;
+}
+
+function switchDetailTab(tab,cid) {
+  document.getElementById('tab-history').style.display=tab==='history'?'block':'none';
+  document.getElementById('tab-status').style.display=tab==='status'?'block':'none';
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>{
+    b.classList.toggle('active',(i===0&&tab==='history')||(i===1&&tab==='status'));
+  });
+  history.replaceState(null,'',`#company/${cid}${tab==='history'?'/history':''}`);
 }
 
 function sectionCard(color,title,addFn,inner) {
@@ -902,11 +1065,12 @@ async function router() {
   content.innerHTML='<div style="text-align:center;padding:60px;color:#9ca3af">読み込み中...</div>';
   try {
     if(hash.startsWith('#company/')) {
-      const id=decodeURIComponent(hash.slice('#company/'.length));
+      const parts=decodeURIComponent(hash.slice('#company/'.length)).split('/');
+      const id=parts[0];
+      const tab=parts[1]==='history'?'history':'history'; // デフォルト: 履歴タブ
       const det=await fetchCompanyDetail(id);
-      // キャッシュに会社情報を持っておく
       if(!cache){cache=await fetchAll();}
-      content.innerHTML=renderCompanyDetail(det);
+      content.innerHTML=renderCompanyDetail(det,tab);
       return;
     }
     const data=await getData();
@@ -926,6 +1090,7 @@ async function router() {
     </div>`;
   }
 }
+
 window.addEventListener('hashchange',router);
 if(!location.hash||location.hash==='#')location.hash='#dashboard';
 router();
