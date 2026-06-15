@@ -12,6 +12,11 @@
       font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, "Yu Gothic", sans-serif;
     }
 
+    body.logged-out .edit-only,
+    body.logged-out .add-only {
+      display: none !important;
+    }
+
     /* Nav */
     .nav-tab {
       display: inline-flex;
@@ -814,6 +819,7 @@
     function getOperator() { return sessionStorage.getItem(OPERATOR_KEY) || ''; }
     function getOperatorLoginId() { return sessionStorage.getItem(OPERATOR_LOGIN_KEY) || ''; }
     function isAdmin() { return sessionStorage.getItem(OPERATOR_ROLE_KEY) === 'admin'; }
+    function canEdit() { return !!getOperator(); }
     function setOperatorSession({ name, loginId, role }) {
       if (name) {
         sessionStorage.setItem(OPERATOR_KEY, name);
@@ -826,8 +832,16 @@
       }
       updateOperatorNav();
     }
+    function renderViewModeBanner() {
+      if (canEdit()) return '';
+      return `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#1e40af">
+    👁 <strong>閲覧モード</strong> — 期限・申請状況の確認のみ可能です。登録・編集・削除・書類チェックは<strong>ログイン後</strong>に利用できます。
+  </div>`;
+    }
     function updateOperatorNav() {
       const btn = document.getElementById('nav-operator-btn');
+      document.body.classList.toggle('logged-in', canEdit());
+      document.body.classList.toggle('logged-out', !canEdit());
       if (!btn) return;
       const op = getOperator();
       btn.textContent = op ? `👤 ${op}` : '👤 ログイン';
@@ -848,7 +862,6 @@
       ${getOperator() ? `<p style="font-size:12px;color:#374151;margin:0 0 12px">ログイン中: <strong>${getOperator()}</strong>${isAdmin() ? ' <span style="color:#7c3aed">(管理者)</span>' : ''}</p>` : ''}
       ${fRow('ログインID', fInput('login_id', '', 'text', 'autocomplete="username"'), '', !getOperator())}
       ${fRow('パスワード', fInput('password', '', 'password', 'autocomplete="current-password"'), getOperator() ? '別アカウントでログインする場合' : '初回: admin / Admin1234', !getOperator())}
-      ${!getOperator() ? '<p style="font-size:11px;color:#9ca3af;margin:0 0 12px">未セットアップの場合は Supabase で supabase_add_features_23568.sql を実行してください。</p>' : ''}
       <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
         ${getOperator() ? `<button type="button" onclick="logoutOperator()" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">ログアウト</button>` : ''}
         ${adminBtn}
@@ -871,9 +884,9 @@
       if (!data?.length) { toast('IDまたはパスワードが正しくありません', 'error'); return; }
       const u = data[0];
       setOperatorSession({ name: u.name, loginId: u.login_id, role: u.role });
-      closeModal(); toast(`${u.name} でログインしました`);
+      closeModal(); toast(`${u.name} でログインしました`); cache = null; router();
     }
-    function logoutOperator() { setOperatorSession({}); closeModal(); toast('ログアウトしました'); }
+    function logoutOperator() { setOperatorSession({}); closeModal(); toast('ログアウトしました'); cache = null; router(); }
 
     async function showStaffAccountMgmt() {
       if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
@@ -1059,8 +1072,9 @@
       showDocChecklist(_docCheckCtx.subsidyType, _docCheckCtx.applicationId, _docCheckCtx.companyId, _docCheckCtx.caseLabel);
     }
     function docCheckBtn(subsidyType, app, companyId, label) {
+      if (!canEdit()) return '';
       const escLabel = (label || '').replace(/'/g, "\\'");
-      return `<button type="button" class="btn-edit" title="書類チェック" onclick="showDocChecklist('${subsidyType}','${app.id}','${companyId}','${escLabel}')">📎</button>`;
+      return `<button type="button" class="btn-edit edit-only" title="書類チェック" onclick="showDocChecklist('${subsidyType}','${app.id}','${companyId}','${escLabel}')">📎</button>`;
     }
 
     // --- 機能 3: 今週の期限 ---
@@ -1325,10 +1339,12 @@
   </div>`;
     }
     function renderDeadlineSettingsBtn() {
-      return `<button type="button" onclick="showFormDeadlines()" style="background:#2563eb;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:500">⚙️ 年度期限設定</button>`;
+      if (!canEdit()) return '';
+      return `<button type="button" class="add-only" onclick="showFormDeadlines()" style="background:#2563eb;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:500">⚙️ 年度期限設定</button>`;
     }
 
     function showFormDeadlines() {
+      if (!requireOperator()) return;
       const fy = getFiscalYearLabel();
       const rows = DEADLINE_SCHEMA.map(s => {
         const row = getDeadlineRow(s.type, s.key);
@@ -1546,7 +1562,7 @@
       <div class="help-section">
         <h3>👤 ログイン・担当者・変更履歴・書類</h3>
         <ul>
-          <li><strong>👤 ログイン</strong> … 右上から<strong>ログインID + パスワード</strong>でログイン。登録・更新・削除の前に必要です。</li>
+          <li><strong>👤 ログイン</strong> … 未ログインは<strong>閲覧のみ</strong>（期限・一覧・会社詳細の確認）。ログイン後は登録・編集・削除・書類チェック・変更履歴の記録が可能です。</li>
           <li><strong>👥 アカウント管理</strong> … 管理者のみ。アカウント作成時に<strong>一般 / 管理者</strong>を選べます。一覧から権限の変更・削除も可能です（初期 admin は保護）。</li>
           <li><strong>社内担当者</strong> … 会社登録・編集で設定。会社一覧・会社詳細に表示されます（取引先側ではなく事務所側の担当）。</li>
           <li><strong>📅 今週の期限</strong> … ダッシュボード上部。7日以内・期限切れの案件を優先表示します。</li>
@@ -1624,6 +1640,7 @@
     //  会社フォーム
     // ================================================================
     function showFormCompany(co = null) {
+      if (!requireOperator()) return;
       const isEdit = !!co;
       openModal(isEdit ? '会社編集' : '会社登録', `
     <form onsubmit="saveCompany(event,${isEdit ? `'${co.id}'` : 'null'})">
@@ -1657,6 +1674,7 @@
     //  キャリアアップフォーム（新規：複数従業員一括登録対応）
     // ================================================================
     function showFormCu(companyId = null, app = null) {
+      if (!requireOperator()) return;
       const isEdit = !!app;
       if (isEdit) {
         // 編集モード：従来通り1名
@@ -1782,6 +1800,7 @@
     }
     // ================================================================
     function showFormBiz(companyId = null, app = null) {
+      if (!requireOperator()) return;
       const isEdit = !!app;
       openModal(isEdit ? '業務改善 編集' : '業務改善 新規登録', `
     <form onsubmit="saveBiz(event,${isEdit ? `'${app.id}'` : 'null'})">
@@ -1821,6 +1840,7 @@
     }
     // ================================================================
     function showFormWork(companyId = null, app = null) {
+      if (!requireOperator()) return;
       const isEdit = !!app;
       openModal(isEdit ? '働き方改革 編集' : '働き方改革 新規登録', `
     <form onsubmit="saveWork(event,${isEdit ? `'${app.id}'` : 'null'})">
@@ -1879,6 +1899,7 @@
     }
 
     function showFormDual(companyId = null, app = null) {
+      if (!requireOperator()) return;
       const isEdit = !!app;
       const ct = app?.course_type || '①出生時';
       const dl = DUAL_DATE_LABEL[ct] || { d1: '日付1', d2: '日付2' };
@@ -1930,6 +1951,7 @@
     }
     // ================================================================
     function showFormReskill(companyId = null, app = null) {
+      if (!requireOperator()) return;
       const isEdit = !!app;
       const d = app ? calcReskill(app) : {};
       const planHint = d.planWindowStart && d.planLimit
@@ -1984,6 +2006,7 @@
     };
 
     function showFormOver65(companyId = null, app = null) {
+      if (!requireOperator()) return;
       const isEdit = !!app;
       const ct = app?.course_type || '①継続雇用促進';
       const d = app ? calcOver65(app) : {};
@@ -2024,6 +2047,7 @@
     }
     // ================================================================
     function showFormNote(companyId, note = null) {
+      if (!requireOperator()) return;
       const isEdit = !!note;
       const today = new Date().toISOString().slice(0, 10);
       openModal(isEdit ? 'メモ編集' : 'メモ追加', `
@@ -2120,7 +2144,7 @@
           ? `<div style="font-size:13px;color:#374151;word-break:break-all">${ev.label}</div>
          ${ev.detail ? `<div style="font-size:11px;color:#9ca3af;margin-top:3px">担当: ${ev.detail}</div>` : ''}
          ${ev.noteObj?.subsidy_type ? `<span class="stbadge" style="${TYPE_STYLE[ev.noteObj.subsidy_type]};font-size:10px;margin-top:4px;display:inline-flex">${TYPE_LABEL[ev.noteObj.subsidy_type]}</span>` : ''}
-         <button class="btn-edit" onclick='showFormNote("${companyId}",${esc})' style="float:right;margin-top:-22px">✏️</button>`
+         <button class="btn-edit edit-only" onclick='showFormNote("${companyId}",${esc})' style="float:right;margin-top:-22px">✏️</button>`
           : `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
            <span class="stbadge" style="${TYPE_STYLE[ev.type]};font-size:10px">${TYPE_LABEL[ev.type]}</span>
            <span style="font-weight:600;font-size:13px">${ev.label}</span>
@@ -2606,7 +2630,7 @@
             ${[co.size_category, co.industry].filter(Boolean).join(' · ') || '規模・業種未設定'}
           </div>
         </div>
-        <button class="btn-edit" onclick="event.stopPropagation();showFormCompany(${esc})" style="flex-shrink:0;margin-left:8px">✏️</button>
+        <button class="btn-edit edit-only" onclick="event.stopPropagation();showFormCompany(${esc})" style="flex-shrink:0;margin-left:8px">✏️</button>
       </div>
       ${urgBadge ? `<div>${urgBadge}</div>` : ''}
       <div style="display:flex;flex-wrap:wrap;gap:5px">
@@ -2624,7 +2648,7 @@
       <h1 style="font-size:18px;font-weight:700;color:#111827">🏢 会社一覧 <span style="font-size:13px;color:#9ca3af;font-weight:400">${companies.length}社</span></h1>
       <div style="display:flex;align-items:center;gap:10px">
         ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
-        <button class="btn-add" onclick="showFormCompany()">＋ 会社登録</button>
+        <button class="btn-add add-only" onclick="showFormCompany()">＋ 会社登録</button>
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:16px">
@@ -2678,7 +2702,7 @@
             ${total === 0 ? `<span style="font-size:12px;color:#9ca3af">申請データなし</span>` : ''}
           </div>
         </div>
-        <button class="btn-edit" onclick="showFormCompany(${JSON.stringify(company).replace(/"/g, '&quot;')})" title="会社情報を編集">✏️</button>
+        <button class="btn-edit edit-only" onclick="showFormCompany(${JSON.stringify(company).replace(/"/g, '&quot;')})" title="会社情報を編集">✏️</button>
       </div>
     </div>
 
@@ -2695,7 +2719,7 @@
     <!-- 履歴タブ -->
     <div id="tab-history" style="display:${showHistory ? 'block' : 'none'}">
       <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
-        <button class="btn-add" onclick="showFormNote('${cid}')">＋ メモ追加</button>
+        <button class="btn-add add-only" onclick="showFormNote('${cid}')">＋ メモ追加</button>
       </div>
       <div style="max-width:680px">
         ${renderTimeline(timeline, cid)}
@@ -2729,7 +2753,7 @@
       return `<div class="card">
     <div style="padding:9px 14px;border-bottom:1px solid ${C.border};background:${C.bg};display:flex;justify-content:space-between;align-items:center">
       <span style="color:${C.text};font-weight:600;font-size:13px">${title}</span>
-      <button onclick="${addFn}" style="background:${C.btn};color:white;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer">＋ 登録</button>
+      <button onclick="${addFn}" class="add-only" style="background:${C.btn};color:white;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer">＋ 登録</button>
     </div>
     <div style="overflow-x:auto">${inner}</div>
   </div>`;
@@ -2749,7 +2773,7 @@
       <td style="font-family:monospace;font-size:12px">${app.is_priority_worker ? fmt(d.sd) : '—'}</td>
       <td>${app.is_priority_worker ? deadlineBadge(d.sDays) : '—'}</td>
       <td>${app.is_priority_worker ? stBadge(app.status_second) : '—'}</td>
-      <td style="white-space:nowrap">${docCheckBtn('career_up', app, companyId, app.employee_name)}<button class="btn-edit" onclick='showFormCu(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('career_up', app, companyId, app.employee_name)}<button class="btn-edit edit-only" onclick='showFormCu(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('purple', '👔 キャリアアップ助成金（正社員化コース）', `showFormCu('${companyId}')`, `
@@ -2773,7 +2797,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td style="white-space:nowrap">${docCheckBtn('biz', app, companyId, app.wage_course || '業務改善')}<button class="btn-edit" onclick='showFormBiz(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('biz', app, companyId, app.wage_course || '業務改善')}<button class="btn-edit edit-only" onclick='showFormBiz(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('blue', '🏭 業務改善助成金（令和8年度: 50/70/90円コース）', `showFormBiz('${companyId}')`, `
@@ -2799,7 +2823,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td style="white-space:nowrap">${docCheckBtn('work', app, companyId, app.goal_type || '働き方改革')}<button class="btn-edit" onclick='showFormWork(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('work', app, companyId, app.goal_type || '働き方改革')}<button class="btn-edit edit-only" onclick='showFormWork(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('teal', '⏰ 働き方改革推進支援助成金（令和8年度）', `showFormWork('${companyId}')`, `
@@ -2825,7 +2849,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
       <td>${deadlineBadge(d.days)}</td>
       <td>${stBadge(app.status)}</td>
-      <td style="white-space:nowrap">${docCheckBtn('dual', app, companyId, app.employee_name)}<button class="btn-edit" onclick='showFormDual(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('dual', app, companyId, app.employee_name)}<button class="btn-edit edit-only" onclick='showFormDual(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('pink', '👶 両立支援等助成金（6コース）', `showFormDual('${companyId}')`, `
@@ -2850,7 +2874,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td style="white-space:nowrap">${docCheckBtn('reskill', app, companyId, app.training_name)}<button class="btn-edit" onclick='showFormReskill(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('reskill', app, companyId, app.training_name)}<button class="btn-edit edit-only" onclick='showFormReskill(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('orange', '📚 人材開発支援助成金（事業展開等リスキリング支援コース）', `showFormReskill('${companyId}')`, `
@@ -2875,7 +2899,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
       <td>${deadlineBadge(d.days)}</td>
       <td>${stBadge(app.status)}</td>
-      <td style="white-space:nowrap">${docCheckBtn('over65', app, companyId, app.target_name)}<button class="btn-edit" onclick='showFormOver65(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('over65', app, companyId, app.target_name)}<button class="btn-edit edit-only" onclick='showFormOver65(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('gray', '👴 65歳超雇用推進助成金', `showFormOver65('${companyId}')`, `
@@ -2893,7 +2917,7 @@
     // ================================================================
     //  助成金別 全件ページ
     // ================================================================
-    function addBtn(fn, label) { return `<button class="btn-add" onclick="${fn}">＋ ${label}</button>`; }
+    function addBtn(fn, label) { return `<button class="btn-add add-only" onclick="${fn}">＋ ${label}</button>`; }
 
     function renderAllCareerUp(apps, companies) {
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
@@ -2911,7 +2935,7 @@
       <td style="font-family:monospace;font-size:12px">${app.is_priority_worker ? fmt(d.sd) : '—'}</td>
       <td>${app.is_priority_worker ? deadlineBadge(d.sDays) : '—'}</td>
       <td>${app.is_priority_worker ? stBadge(app.status_second) : '—'}</td>
-      <td><button class="btn-edit" onclick='showFormCu(null,${esc})'>✏️</button></td>
+      <td><button class="btn-edit edit-only" onclick='showFormCu(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       const hidden = apps.length - filtered.length;
@@ -2946,7 +2970,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormBiz(null,${esc})'>✏️</button></td>
+      <td><button class="btn-edit edit-only" onclick='showFormBiz(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       const hidden = apps.length - filtered.length;
@@ -2984,7 +3008,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormWork(null,${esc})'>✏️</button></td>
+      <td><button class="btn-edit edit-only" onclick='showFormWork(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       const hidden = apps.length - filtered.length;
@@ -3022,7 +3046,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
       <td>${deadlineBadge(d.days)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormDual(null,${esc})'>✏️</button></td>
+      <td><button class="btn-edit edit-only" onclick='showFormDual(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       const hidden = apps.length - filtered.length;
@@ -3060,7 +3084,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormReskill(null,${esc})'>✏️</button></td>
+      <td><button class="btn-edit edit-only" onclick='showFormReskill(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       const hidden = apps.length - filtered.length;
@@ -3097,7 +3121,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
       <td>${deadlineBadge(d.days)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormOver65(null,${esc})'>✏️</button></td>
+      <td><button class="btn-edit edit-only" onclick='showFormOver65(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       const hidden = apps.length - filtered.length;
@@ -3165,22 +3189,22 @@
           const tab = parts[1] === 'status' ? 'status' : 'history';
           const det = await fetchCompanyDetail(id);
           if (!cache) { cache = await fetchAll(); }
-          content.innerHTML = renderCompanyDetail(det, tab);
+          content.innerHTML = renderViewModeBanner() + renderCompanyDetail(det, tab);
           return;
         }
         const data = await getData();
         if (hash.startsWith('#companies')) {
           const qs = hash.includes('?') ? hash.split('?')[1] : '';
           const q = qs ? decodeURIComponent(new URLSearchParams(qs).get('q') || '') : '';
-          content.innerHTML = renderCompanies(data, q); return;
+          content.innerHTML = renderViewModeBanner() + renderCompanies(data, q); return;
         }
-        if (hash === '#career-up') { content.innerHTML = renderAllCareerUp(data.careerUp, data.companies); return; }
-        if (hash === '#biz') { content.innerHTML = renderAllBiz(data.biz, data.companies); return; }
-        if (hash === '#work') { content.innerHTML = renderAllWork(data.work, data.companies); return; }
-        if (hash === '#dual') { content.innerHTML = renderAllDual(data.dual, data.companies); return; }
-        if (hash === '#reskill') { content.innerHTML = renderAllReskill(data.reskill, data.companies); return; }
-        if (hash === '#over65') { content.innerHTML = renderAllOver65(data.over65, data.companies); return; }
-        content.innerHTML = renderDashboard(data);
+        if (hash === '#career-up') { content.innerHTML = renderViewModeBanner() + renderAllCareerUp(data.careerUp, data.companies); return; }
+        if (hash === '#biz') { content.innerHTML = renderViewModeBanner() + renderAllBiz(data.biz, data.companies); return; }
+        if (hash === '#work') { content.innerHTML = renderViewModeBanner() + renderAllWork(data.work, data.companies); return; }
+        if (hash === '#dual') { content.innerHTML = renderViewModeBanner() + renderAllDual(data.dual, data.companies); return; }
+        if (hash === '#reskill') { content.innerHTML = renderViewModeBanner() + renderAllReskill(data.reskill, data.companies); return; }
+        if (hash === '#over65') { content.innerHTML = renderViewModeBanner() + renderAllOver65(data.over65, data.companies); return; }
+        content.innerHTML = renderViewModeBanner() + renderDashboard(data);
       } catch (err) {
         content.innerHTML = `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:18px;color:#991b1b">
       <div style="font-weight:700;margin-bottom:6px">⚠️ データの読み込みに失敗しました</div>
