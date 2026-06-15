@@ -1,6 +1,6 @@
 -- ============================================================
 --  助成金統合管理システム  Supabase マイグレーション
---  対象: キャリアアップ / 業務改善 / 働き方改革 / 両立支援
+--  対象: キャリアアップ / 業務改善 / 働き方改革 / 両立支援 / リスキリング / 65歳超
 -- ============================================================
 
 -- 拡張
@@ -121,6 +121,52 @@ CREATE TABLE dual_support_applications (
 COMMENT ON TABLE dual_support_applications IS '両立支援等助成金 申請管理（6コース）';
 
 -- ============================================================
+--  人材開発支援助成金（事業展開等リスキリング支援コース）
+-- ============================================================
+CREATE TABLE reskilling_applications (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id          uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  training_name       text NOT NULL,                -- 訓練名称
+  training_category   text CHECK (training_category IN (
+                        '①新規事業・事業拡大','②DX推進','③GX推進','④その他事業展開')),
+  trainee_count       smallint CHECK (trainee_count > 0),
+  plan_submit_date    date,                         -- 計画届提出日（実績）
+  training_start_date date,                         -- 訓練開始日
+  training_end_date   date,                         -- 訓練終了日
+  exam_date           date,                         -- 受験日（資格試験等・支給申請起算）
+  status              text NOT NULL DEFAULT '未申請'
+                      CHECK (status IN ('未申請','計画届提出済','訓練実施中',
+                                        '訓練完了（支給待）','支給申請済','承認済','不承認')),
+  notes               text,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE reskilling_applications IS '人材開発支援助成金（事業展開等リスキリング支援コース）';
+
+-- ============================================================
+--  65歳超雇用推進助成金
+-- ============================================================
+CREATE TABLE over65_applications (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id          uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  target_name         text NOT NULL,
+  course_type         text NOT NULL CHECK (course_type IN (
+                        '①継続雇用促進','②雇用管理改善','③無期雇用転換')),
+  measure_detail      text,
+  plan_cert_date      date,
+  implementation_date date,
+  application_date    date,
+  status              text NOT NULL DEFAULT '未申請'
+                      CHECK (status IN (
+                        '未申請','計画申請済','計画認定済','措置実施済',
+                        '支給申請済','承認済','不承認')),
+  notes               text,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE over65_applications IS '65歳超雇用推進助成金 申請管理';
+
+-- ============================================================
 --  updated_at 自動更新トリガー
 -- ============================================================
 CREATE OR REPLACE FUNCTION set_updated_at()
@@ -151,6 +197,14 @@ CREATE TRIGGER trg_dual_updated_at
   BEFORE UPDATE ON dual_support_applications
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TRIGGER trg_reskill_updated_at
+  BEFORE UPDATE ON reskilling_applications
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_over65_updated_at
+  BEFORE UPDATE ON over65_applications
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- ============================================================
 --  インデックス
 -- ============================================================
@@ -159,6 +213,8 @@ CREATE INDEX idx_biz_company        ON business_improvement_applications(company
 CREATE INDEX idx_work_company       ON work_style_applications(company_id);
 CREATE INDEX idx_dual_company       ON dual_support_applications(company_id);
 CREATE INDEX idx_dual_course        ON dual_support_applications(course_type);
+CREATE INDEX idx_reskill_company    ON reskilling_applications(company_id);
+CREATE INDEX idx_over65_company     ON over65_applications(company_id);
 
 -- ============================================================
 --  統合ダッシュボード用ビュー（期限日はアプリ側で計算）
@@ -218,7 +274,35 @@ UNION ALL
     notes,
     created_at,
     updated_at
-  FROM dual_support_applications;
+  FROM dual_support_applications
+UNION ALL
+  SELECT
+    'reskill'                    AS subsidy_type,
+    'リスキリング支援'            AS subsidy_label,
+    id,
+    company_id,
+    training_name                AS target_name,
+    training_category            AS sub_label,
+    status,
+    training_start_date          AS key_date,
+    notes,
+    created_at,
+    updated_at
+  FROM reskilling_applications
+UNION ALL
+  SELECT
+    'over65'                     AS subsidy_type,
+    '65歳超雇用推進'              AS subsidy_label,
+    id,
+    company_id,
+    target_name                  AS target_name,
+    course_type                  AS sub_label,
+    status,
+    implementation_date          AS key_date,
+    notes,
+    created_at,
+    updated_at
+  FROM over65_applications;
 
 -- ============================================================
 --  サンプルデータ（スプレッドシートの内容を移行）
@@ -313,7 +397,43 @@ JOIN (VALUES
 ) AS v(company_name, emp, pic, course_type, support_course, d1, d2, status, progress, notes)
 ON c.name = v.company_name;
 
+-- リスキリング支援
+INSERT INTO reskilling_applications
+  (company_id, training_name, training_category, trainee_count,
+   plan_submit_date, training_start_date, training_end_date, exam_date, status, notes)
+SELECT c.id, v.name, v.cat, v.cnt,
+       v.plan_date::date, v.start_date::date, v.end_date::date, v.exam_date::date, v.status, v.notes
+FROM companies c
+JOIN (VALUES
+  ('株式会社テスト',       'DX基礎研修（全社）',              '②DX推進',             12, '2026-04-10', '2026-06-01', '2026-09-30', NULL,         '訓練実施中',         ''),
+  ('テスト商事株式会社',   '新規事業立上げマネジメント研修',   '①新規事業・事業拡大',   5,  NULL,         '2026-08-01', NULL,         NULL,         '未申請',             '計画届要作成（7/1期限）'),
+  ('合同会社みらい',       'カーボンニュートラル実務研修',     '③GX推進',              8,  '2026-05-20', '2026-07-01', '2026-11-30', NULL,         '訓練完了（支給待）',   '支給申請2/28まで'),
+  ('株式会社花子工業',     '情報処理安全確保支援士対策',       '②DX推進',              3,  '2026-09-01', '2026-11-01', '2027-01-31', '2027-02-15', '訓練実施中',         '受験後2か月以内に支給申請'),
+  ('テスト製造株式会社',   'IoT・スマートファクトリー研修',    '②DX推進',              6,  '2026-07-15', '2026-09-01', NULL,         NULL,         '計画届提出済',       '10月開始予定'),
+  ('有限会社サンプル商事', '小規模事業者向けAI活用講座',       '④その他事業展開',       4,  NULL,         '2026-10-01', NULL,         NULL,         '未申請',             '9/1までに計画届'),
+  ('株式会社東京サービス', 'サービス業デジタル化研修',         '②DX推進',             10,  '2025-11-20', '2026-01-15', '2026-05-31', NULL,         '承認済',             ''),
+  ('有限会社サンプル',     '省エネ・脱炭素基礎コース',         '③GX推進',              7,  '2026-03-01', '2026-04-01', '2026-08-31', NULL,         '支給申請済',         ''),
+  ('株式会社太郎',         'ECサイト構築・運用研修',           '①新規事業・事業拡大',   2,  '2026-02-10', '2026-04-01', '2026-07-31', NULL,         '不承認',             '要件不備'),
+  ('テスト製造株式会社',   'データ分析実践（Python）',         '②DX推進',              4,  '2026-11-05', '2027-01-10', '2027-03-20', NULL,         '計画届提出済',       '年度内完了見込み')
+) AS v(company_name, name, cat, cnt, plan_date, start_date, end_date, exam_date, status, notes)
+ON c.name = v.company_name;
 
+-- 65歳超雇用推進
+INSERT INTO over65_applications
+  (company_id, target_name, course_type, measure_detail,
+   plan_cert_date, implementation_date, application_date, status, notes)
+SELECT c.id, v.target, v.course, v.measure,
+       v.plan_date::date, v.impl_date::date, v.app_date::date, v.status, v.notes
+FROM companies c
+JOIN (VALUES
+  ('株式会社テスト',       '定年65歳→68歳引上げ',     '①継続雇用促進', '就業規則改正・定年引上げ',           '2026-02-15', '2026-04-01', NULL,         '措置実施済',   '4/15までに支給申請'),
+  ('テスト製造株式会社',   '定年の定め廃止',           '①継続雇用促進', '定年廃止・継続雇用制度',             '2026-04-01', '2026-06-15', '2026-07-10', '支給申請済',   ''),
+  ('株式会社花子工業',     '高年齢者評価制度整備',     '②雇用管理改善', '評価制度・賃金規程改定',             '2026-03-20', '2026-05-01', NULL,         '計画認定済',   '5月実施済・申請準備中'),
+  ('合同会社みらい',       '再雇用規程の整備',         '②雇用管理改善', '再雇用規程・就業規則改定',           '2026-06-01', '2026-07-01', NULL,         '措置実施済',   ''),
+  ('株式会社太郎',         '田中一郎',                 '③無期雇用転換', '有期→無期転換（製造部）',            '2026-01-10', '2026-02-01', '2026-03-05', '承認済',       ''),
+  ('株式会社あいうえお',   '佐藤花子',                 '③無期雇用転換', '有期→無期転換（事務）',              NULL,         NULL,         NULL,         '計画申請済',   '計画認定待ち')
+) AS v(company_name, target, course, measure, plan_date, impl_date, app_date, status, notes)
+ON c.name = v.company_name;
 
 -- RLS を無効化（社内管理ツールのため）
 ALTER TABLE companies                        DISABLE ROW LEVEL SECURITY;
@@ -321,13 +441,17 @@ ALTER TABLE career_up_applications           DISABLE ROW LEVEL SECURITY;
 ALTER TABLE business_improvement_applications DISABLE ROW LEVEL SECURITY;
 ALTER TABLE work_style_applications          DISABLE ROW LEVEL SECURITY;
 ALTER TABLE dual_support_applications        DISABLE ROW LEVEL SECURITY;
+ALTER TABLE reskilling_applications          DISABLE ROW LEVEL SECURITY;
+ALTER TABLE over65_applications              DISABLE ROW LEVEL SECURITY;
 
 -- データ件数確認
 SELECT 'companies' AS tbl, COUNT(*) FROM companies
 UNION ALL SELECT 'career_up',  COUNT(*) FROM career_up_applications
 UNION ALL SELECT 'biz',        COUNT(*) FROM business_improvement_applications
 UNION ALL SELECT 'work',       COUNT(*) FROM work_style_applications
-UNION ALL SELECT 'dual',       COUNT(*) FROM dual_support_applications;
+UNION ALL SELECT 'dual',       COUNT(*) FROM dual_support_applications
+UNION ALL SELECT 'reskill',    COUNT(*) FROM reskilling_applications
+UNION ALL SELECT 'over65',    COUNT(*) FROM over65_applications;
 
 
 
@@ -337,11 +461,11 @@ CREATE TABLE IF NOT EXISTS company_notes (
   note_date    date NOT NULL DEFAULT CURRENT_DATE,
   content      text NOT NULL,
   author       text,
-  subsidy_type text CHECK (subsidy_type IN ('career_up','biz','work','dual')),
+  subsidy_type text CHECK (subsidy_type IN ('career_up','biz','work','dual','reskill','over65')),
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE company_notes DISABLE ROW LEVEL SECURITY;
 CREATE INDEX ON company_notes(company_id);
 
-
-ALTER TABLE company_notes DISABLE ROW LEVEL SECURITY;
+-- 既存DBへ追加する場合: reskilling_applications テーブル作成と
+-- company_notes の subsidy_type 制約更新（'reskill' 追加）を実行してください。
