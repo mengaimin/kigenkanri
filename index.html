@@ -762,6 +762,7 @@
     <a class="nav-tab" href="#dual">👶 両立支援</a>
     <a class="nav-tab" href="#reskill">📚 リスキリング</a>
     <a class="nav-tab" href="#over65">👴 65歳超</a>
+    <button type="button" id="nav-operator-btn" class="nav-help-btn" onclick="showOperatorLogin()" style="margin-left:auto;margin-right:8px">👤 ログイン</button>
     <button type="button" class="nav-help-btn" onclick="showHelpGuide()">❓ 使い方</button>
   </nav>
 
@@ -804,6 +805,307 @@
     <input type="checkbox"${on ? ' checked' : ''} onchange="toggleHideExpired()" style="width:15px;height:15px;cursor:pointer;accent-color:#2563eb">
     期限切れを非表示
   </label>`;
+    }
+
+    // --- 機能 5: 担当者ログイン（ID + パスワード） ---
+    const OPERATOR_KEY = 'kikan_operator';
+    const OPERATOR_LOGIN_KEY = 'kikan_operator_login_id';
+    const OPERATOR_ROLE_KEY = 'kikan_operator_role';
+    function getOperator() { return sessionStorage.getItem(OPERATOR_KEY) || ''; }
+    function getOperatorLoginId() { return sessionStorage.getItem(OPERATOR_LOGIN_KEY) || ''; }
+    function isAdmin() { return sessionStorage.getItem(OPERATOR_ROLE_KEY) === 'admin'; }
+    function setOperatorSession({ name, loginId, role }) {
+      if (name) {
+        sessionStorage.setItem(OPERATOR_KEY, name);
+        sessionStorage.setItem(OPERATOR_LOGIN_KEY, loginId || '');
+        sessionStorage.setItem(OPERATOR_ROLE_KEY, role || 'staff');
+      } else {
+        sessionStorage.removeItem(OPERATOR_KEY);
+        sessionStorage.removeItem(OPERATOR_LOGIN_KEY);
+        sessionStorage.removeItem(OPERATOR_ROLE_KEY);
+      }
+      updateOperatorNav();
+    }
+    function updateOperatorNav() {
+      const btn = document.getElementById('nav-operator-btn');
+      if (!btn) return;
+      const op = getOperator();
+      btn.textContent = op ? `👤 ${op}` : '👤 ログイン';
+      btn.title = op ? (isAdmin() ? 'ログアウト / アカウント管理' : 'ログアウト') : 'IDとパスワードでログイン';
+    }
+    function requireOperator() {
+      if (getOperator()) return true;
+      toast('先に右上「👤 ログイン」からIDとパスワードでログインしてください', 'error');
+      showOperatorLogin();
+      return false;
+    }
+    function showOperatorLogin() {
+      const adminBtn = isAdmin()
+        ? `<button type="button" onclick="showStaffAccountMgmt()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">👥 アカウント管理</button>`
+        : '';
+      openModal('👤 ログイン', `
+    <form onsubmit="submitOperatorLogin(event)">
+      ${getOperator() ? `<p style="font-size:12px;color:#374151;margin:0 0 12px">ログイン中: <strong>${getOperator()}</strong>${isAdmin() ? ' <span style="color:#7c3aed">(管理者)</span>' : ''}</p>` : ''}
+      ${fRow('ログインID', fInput('login_id', '', 'text', 'autocomplete="username"'), '', !getOperator())}
+      ${fRow('パスワード', fInput('password', '', 'password', 'autocomplete="current-password"'), getOperator() ? '別アカウントでログインする場合' : '初回: admin / Admin1234', !getOperator())}
+      ${!getOperator() ? '<p style="font-size:11px;color:#9ca3af;margin:0 0 12px">未セットアップの場合は Supabase で supabase_add_features_23568.sql を実行してください。</p>' : ''}
+      <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+        ${getOperator() ? `<button type="button" onclick="logoutOperator()" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">ログアウト</button>` : ''}
+        ${adminBtn}
+        ${getOperator() ? '' : '<button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-weight:500">ログイン</button>'}
+        ${getOperator() ? '<button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-weight:500">切替ログイン</button>' : ''}
+      </div>
+    </form>`);
+    }
+    async function submitOperatorLogin(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const loginId = fd.get('login_id')?.trim();
+      const password = fd.get('password') || '';
+      if (!loginId || !password) { toast('IDとパスワードを入力してください', 'error'); return; }
+      const { data, error } = await db.rpc('staff_login', { p_login_id: loginId, p_password: password });
+      if (error) {
+        toast(error.message.includes('staff_login') ? 'ログイン機能未設定です。SQLを実行してください' : errMsg(error), 'error');
+        return;
+      }
+      if (!data?.length) { toast('IDまたはパスワードが正しくありません', 'error'); return; }
+      const u = data[0];
+      setOperatorSession({ name: u.name, loginId: u.login_id, role: u.role });
+      closeModal(); toast(`${u.name} でログインしました`);
+    }
+    function logoutOperator() { setOperatorSession({}); closeModal(); toast('ログアウトしました'); }
+
+    async function showStaffAccountMgmt() {
+      if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
+      openModal('👥 アカウント管理', `
+    <p style="font-size:12px;color:#6b7280;margin:0 0 14px">管理者パスワードで認証して、アカウントの一覧・作成・削除ができます。</p>
+    <form onsubmit="submitStaffCreate(event)" style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb">
+      <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px">管理者認証</div>
+      ${fRow('管理者パスワード', fInput('admin_password', '', 'password', 'id="staff-admin-pw" autocomplete="current-password"'), '操作のたびに必要', true)}
+      <div style="font-size:13px;font-weight:600;color:#374151;margin:14px 0 10px">新規アカウント</div>
+      <div class="form-grid">
+        ${fRow('表示名', fInput('name', '', 'text'), '例：田中', true)}
+        ${fRow('ログインID', fInput('new_login_id', '', 'text'), '3文字以上・英数字', true)}
+      </div>
+      ${fRow('パスワード', fInput('new_password', '', 'password'), '8文字以上', true)}
+      ${fRow('権限', fSelect('new_role', [['staff', '一般'], ['admin', '管理者']], 'staff'), '管理者も作成できます')}
+      <div style="text-align:right;margin-top:12px">
+        <button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-weight:500">＋ アカウント作成</button>
+      </div>
+    </form>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:600;color:#374151">登録アカウント</div>
+      <button type="button" onclick="refreshStaffList()" style="background:#f3f4f6;border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">🔄 更新</button>
+    </div>
+    <div id="staff-list-wrap"><div style="color:#9ca3af;font-size:12px;padding:12px">管理者パスワードを入力して「更新」を押してください</div></div>
+    <div style="text-align:right;margin-top:16px">
+      <button type="button" onclick="closeModal()" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer">閉じる</button>
+    </div>`, { wide: true });
+    }
+    function getAdminPasswordInput() {
+      return document.getElementById('staff-admin-pw')?.value || document.querySelector('[name="admin_password"]')?.value || '';
+    }
+    async function refreshStaffList() {
+      const pw = getAdminPasswordInput();
+      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
+      const wrap = document.getElementById('staff-list-wrap');
+      if (wrap) wrap.innerHTML = '<div style="color:#9ca3af;font-size:12px;padding:12px">読み込み中...</div>';
+      const { data, error } = await db.rpc('staff_list_accounts', {
+        p_admin_login_id: getOperatorLoginId(), p_admin_password: pw,
+      });
+      if (error) {
+        if (wrap) wrap.innerHTML = `<div style="color:#dc2626;font-size:12px;padding:12px">${errMsg(error)}</div>`;
+        return;
+      }
+      const rows = (data || []).map(s => {
+        const isPrimary = s.login_id === 'admin';
+        const roleBtn = isPrimary ? '—' : s.role === 'admin'
+          ? `<button type="button" onclick="setStaffRole('${s.login_id}','staff')" style="background:#f3f4f6;color:#374151;border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;margin-right:4px">一般に</button>`
+          : `<button type="button" onclick="setStaffRole('${s.login_id}','admin')" style="background:#ede9fe;color:#5b21b6;border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;margin-right:4px">管理者に</button>`;
+        const delBtn = isPrimary ? '' : `<button type="button" onclick="deleteStaffAccount('${s.login_id}')" style="background:#fee2e2;color:#991b1b;border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">削除</button>`;
+        return `<tr>
+        <td style="font-weight:500">${s.name}</td>
+        <td style="font-family:monospace;font-size:12px">${s.login_id}</td>
+        <td>${s.role === 'admin' ? '<span style="color:#7c3aed;font-weight:600">管理者</span>' : '一般'}</td>
+        <td style="font-size:11px;color:#9ca3af">${new Date(s.created_at).toLocaleDateString('ja-JP')}</td>
+        <td style="white-space:nowrap">${roleBtn}${delBtn || (isPrimary ? '—' : '')}</td>
+      </tr>`;
+      }).join('');
+      if (wrap) wrap.innerHTML = `<div style="overflow-x:auto"><table class="help-table" style="width:100%">
+        <thead><tr><th>表示名</th><th>ログインID</th><th>種別</th><th>作成日</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" style="color:#9ca3af">アカウントなし</td></tr>'}</tbody>
+      </table></div>`;
+    }
+    async function submitStaffCreate(e) {
+      e.preventDefault();
+      if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
+      const fd = new FormData(e.target);
+      const adminPw = fd.get('admin_password') || '';
+      const name = fd.get('name')?.trim();
+      const newLoginId = fd.get('new_login_id')?.trim();
+      const newPassword = fd.get('new_password') || '';
+      if (!adminPw || !name || !newLoginId || !newPassword) {
+        toast('すべての項目を入力してください', 'error'); return;
+      }
+      const { data, error } = await db.rpc('staff_create_account', {
+        p_admin_login_id: getOperatorLoginId(),
+        p_admin_password: adminPw,
+        p_name: name,
+        p_new_login_id: newLoginId,
+        p_new_password: newPassword,
+        p_role: fd.get('new_role') || 'staff',
+      });
+      if (error) { toast(errMsg(error), 'error'); return; }
+      const roleLabel = (fd.get('new_role') || 'staff') === 'admin' ? '管理者' : '一般';
+      toast(`アカウント「${newLoginId}」（${roleLabel}）を作成しました`);
+      e.target.querySelector('[name="name"]').value = '';
+      e.target.querySelector('[name="new_login_id"]').value = '';
+      e.target.querySelector('[name="new_password"]').value = '';
+      await refreshStaffList();
+    }
+    async function setStaffRole(loginId, role) {
+      if (!isAdmin()) return;
+      const label = role === 'admin' ? '管理者' : '一般';
+      if (!confirm(`「${loginId}」を${label}に変更しますか？`)) return;
+      const pw = getAdminPasswordInput();
+      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
+      const { error } = await db.rpc('staff_set_account_role', {
+        p_admin_login_id: getOperatorLoginId(),
+        p_admin_password: pw,
+        p_target_login_id: loginId,
+        p_role: role,
+      });
+      if (error) { toast(errMsg(error), 'error'); return; }
+      toast(`「${loginId}」を${label}に変更しました`);
+      await refreshStaffList();
+    }
+    async function deleteStaffAccount(loginId) {
+      if (!isAdmin()) return;
+      if (!confirm(`アカウント「${loginId}」を削除しますか？`)) return;
+      const pw = getAdminPasswordInput();
+      if (!pw) { toast('管理者パスワードを入力してから削除してください', 'error'); return; }
+      const { error } = await db.rpc('staff_delete_account', {
+        p_admin_login_id: getOperatorLoginId(),
+        p_admin_password: pw,
+        p_target_login_id: loginId,
+      });
+      if (error) { toast(errMsg(error), 'error'); return; }
+      toast('アカウントを削除しました');
+      await refreshStaffList();
+    }
+
+    // --- 機能 6: 変更履歴 ---
+    async function logAudit({ companyId, tableName, recordId, action, summary }) {
+      try {
+        await db.from('audit_logs').insert({
+          company_id: companyId || null, table_name: tableName, record_id: recordId || null,
+          action, summary, changed_by: getOperator() || '不明',
+        });
+      } catch (_) { /* テーブル未作成時は無視 */ }
+    }
+
+    // --- 機能 8: 書類チェックリスト ---
+    const DOC_TEMPLATES = {
+      career_up: ['雇用契約書（写）', '正社員転換に関する届出', '支給申請書', '賃金台帳（写）', '出勤簿（写）'],
+      biz: ['交付申請書', '事業計画書', '賃金台帳', '事業実績報告書', '支給申請書', '設備導入証憑'],
+      work: ['交付申請書', '就業規則（改定版）', '労使協定書', '事業実績報告書', '支給申請書'],
+      dual: ['支給申請書', '休業・復帰に関する証明', '賃金台帳（写）', '出勤簿（写）'],
+      reskill: ['職業訓練実施計画届', '訓練実施報告書', '支給申請書', '賃金台帳（写）', '受講者署名簿'],
+      over65: ['計画届・計画認定通知', '就業規則（改定版）', '労使協定書（写）', '支給申請書', '被保険者台帳（写）'],
+    };
+    async function ensureDocChecklist(subsidyType, applicationId, companyId) {
+      const tpl = DOC_TEMPLATES[subsidyType] || [];
+      if (!tpl.length) return [];
+      const { data: existing } = await db.from('document_checklists').select('doc_key').eq('subsidy_type', subsidyType).eq('application_id', applicationId);
+      const have = new Set((existing || []).map(r => r.doc_key));
+      const missing = tpl.map((label, i) => ({ key: `doc_${i}`, label })).filter(d => !have.has(d.key));
+      if (missing.length) {
+        await db.from('document_checklists').insert(missing.map(d => ({
+          company_id: companyId, subsidy_type: subsidyType, application_id: applicationId,
+          doc_key: d.key, doc_label: d.label,
+        })));
+      }
+      const { data } = await db.from('document_checklists').select('*').eq('subsidy_type', subsidyType).eq('application_id', applicationId).order('doc_key');
+      return data || [];
+    }
+    let _docCheckCtx = { subsidyType: '', applicationId: '', companyId: '', caseLabel: '' };
+    async function showDocChecklist(subsidyType, applicationId, companyId, caseLabel) {
+      if (!requireOperator()) return;
+      _docCheckCtx = { subsidyType, applicationId, companyId, caseLabel };
+      const items = await ensureDocChecklist(subsidyType, applicationId, companyId);
+      const rows = items.map(it => {
+        const esc = JSON.stringify(it).replace(/"/g, '&quot;');
+        return `<tr>
+      <td><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+        <input type="checkbox"${it.is_checked ? ' checked' : ''} onchange="toggleDocCheck(${esc}, this.checked)" style="width:16px;height:16px">
+        ${it.doc_label}
+      </label></td>
+      <td style="font-family:monospace;font-size:12px">${fmt(parseDate(it.checked_date))}</td>
+    </tr>`;
+      }).join('');
+      const done = items.filter(i => i.is_checked).length;
+      openModal(`📎 書類チェックリスト — ${TYPE_LABEL[subsidyType] || subsidyType}`, `
+    <p style="font-size:12px;color:#6b7280;margin:0 0 12px">${caseLabel}</p>
+    <div style="font-size:12px;margin-bottom:10px;color:#374151">進捗: <strong>${done}/${items.length}</strong> 件</div>
+    <table class="help-table"><thead><tr><th>書類</th><th>確認日</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="2" style="color:#9ca3af">テンプレートなし</td></tr>'}</tbody></table>
+    <div style="text-align:right;margin-top:14px"><button type="button" onclick="closeModal()" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer">閉じる</button></div>`);
+    }
+    async function toggleDocCheck(item, checked) {
+      const today = toInputDate(today0());
+      const { error } = await db.from('document_checklists').update({ is_checked: checked, checked_date: checked ? today : null }).eq('id', item.id);
+      if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId: item.company_id, tableName: 'document_checklists', recordId: item.id, action: 'update', summary: `書類${checked ? '確認' : '未確認'}: ${item.doc_label}` });
+      showDocChecklist(_docCheckCtx.subsidyType, _docCheckCtx.applicationId, _docCheckCtx.companyId, _docCheckCtx.caseLabel);
+    }
+    function docCheckBtn(subsidyType, app, companyId, label) {
+      const escLabel = (label || '').replace(/'/g, "\\'");
+      return `<button type="button" class="btn-edit" title="書類チェック" onclick="showDocChecklist('${subsidyType}','${app.id}','${companyId}','${escLabel}')">📎</button>`;
+    }
+
+    // --- 機能 3: 今週の期限 ---
+    function renderWeeklyPanel(data) {
+      let items = buildDeadlineItems(data);
+      if (getHideExpired()) items = items.filter(i => !isExpiredDeadline(i.days));
+      items = items.filter(i => i.days !== null && i.days <= 7).sort((a, b) => (a.days ?? 0) - (b.days ?? 0));
+      if (!items.length) {
+        return `<div class="card" style="margin-bottom:16px;padding:14px 16px;background:#f0fdf4;border-color:#bbf7d0">
+      <div style="font-size:13px;font-weight:600;color:#166534">📅 今週の期限（7日以内・期限切れ）</div>
+      <div style="font-size:12px;color:#15803d;margin-top:6px">該当案件はありません 🎉</div>
+    </div>`;
+      }
+      const rows = items.slice(0, 15).map(it => `<tr>
+    <td><span class="stbadge" style="${TYPE_STYLE[it.type]};font-size:10px">${TYPE_LABEL[it.type]}</span></td>
+    <td><a class="co-link" href="#company/${it.companyId}">${it.companyName}</a></td>
+    <td style="font-size:12px">${it.target || '—'}</td>
+    <td style="font-size:12px;color:#6b7280">${it.kind}</td>
+    <td style="font-family:monospace;font-size:12px">${fmt(it.deadline)}</td>
+    <td>${deadlineBadge(it.days)}</td>
+  </tr>`).join('');
+      const more = items.length > 15 ? `<div style="font-size:11px;color:#9ca3af;margin-top:8px">他 ${items.length - 15} 件… 下の一覧で確認できます</div>` : '';
+      return `<div class="card" style="margin-bottom:16px;border-left:4px solid #f97316">
+    <div style="padding:12px 16px 8px;font-size:13px;font-weight:700;color:#9a3412">📅 今週の期限（7日以内・期限切れ） <span style="font-weight:400;color:#6b7280">${items.length}件</span></div>
+    <div style="overflow-x:auto;padding:0 16px 14px"><table style="width:100%;font-size:13px">
+      <thead><tr style="color:#6b7280;font-size:11px"><th>助成金</th><th>会社</th><th>対象</th><th>期限種別</th><th>期限日</th><th>残日数</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>${more}</div>
+  </div>`;
+    }
+
+    function renderAuditSection(logs) {
+      if (!logs?.length) return '';
+      const rows = logs.slice(0, 30).map(l => `<tr>
+    <td style="font-family:monospace;font-size:11px;white-space:nowrap">${new Date(l.created_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+    <td style="font-size:12px">${l.changed_by || '—'}</td>
+    <td style="font-size:12px">${l.summary}</td>
+  </tr>`).join('');
+      return `<div class="card" style="margin-top:16px">
+    <div class="card-header" style="font-size:13px;font-weight:600">📝 変更履歴（直近30件）</div>
+    <div style="overflow-x:auto"><table style="width:100%;font-size:13px">
+      <thead><tr style="color:#6b7280;font-size:11px"><th>日時</th><th>担当</th><th>内容</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
     }
 
     // ================================================================
@@ -1066,7 +1368,7 @@
     }
 
     async function saveDeadlines(e) {
-      e.preventDefault();
+      e.preventDefault(); if (!requireOperator()) return;
       const fd = new FormData(e.target);
       const fiscalYear = fd.get('fiscal_year_label') || DEADLINE_DEFAULTS.fiscal_year_label;
       const upserts = DEADLINE_SCHEMA.map(s => {
@@ -1085,6 +1387,7 @@
       });
       const { error } = await db.from('program_deadlines').upsert(upserts, { onConflict: 'subsidy_type,deadline_key' });
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ tableName: 'program_deadlines', action: 'update', summary: `年度制度締切更新: ${fiscalYear}` });
       toast('年度制度締切を更新しました');
       closeModal();
       deadlineRows = null;
@@ -1110,7 +1413,7 @@
       return { careerUp: cu.data || [], biz: bi.data || [], work: ws.data || [], dual: ds.data || [], reskill: rs.data || [], over65: o65.data || [], companies: co.data || [] };
     }
     async function fetchCompanyDetail(id) {
-      const [co, cu, bi, ws, ds, rs, o65, nt] = await Promise.all([
+      const [co, cu, bi, ws, ds, rs, o65, nt, al] = await Promise.all([
         db.from('companies').select('*').eq('id', id).single(),
         db.from('career_up_applications').select('*').eq('company_id', id).order('created_at', { ascending: false }),
         db.from('business_improvement_applications').select('*').eq('company_id', id).order('created_at', { ascending: false }),
@@ -1119,8 +1422,9 @@
         db.from('reskilling_applications').select('*').eq('company_id', id).order('created_at', { ascending: false }),
         db.from('over65_applications').select('*').eq('company_id', id).order('created_at', { ascending: false }),
         db.from('company_notes').select('*').eq('company_id', id).order('note_date', { ascending: false }),
+        db.from('audit_logs').select('*').eq('company_id', id).order('created_at', { ascending: false }).limit(50),
       ]);
-      return { company: co.data, careerUp: cu.data || [], biz: bi.data || [], work: ws.data || [], dual: ds.data || [], reskill: rs.data || [], over65: o65.data || [], notes: nt.data || [] };
+      return { company: co.data, careerUp: cu.data || [], biz: bi.data || [], work: ws.data || [], dual: ds.data || [], reskill: rs.data || [], over65: o65.data || [], notes: nt.data || [], auditLogs: al.data || [] };
     }
 
     // ================================================================
@@ -1241,6 +1545,19 @@
       </div>
 
       <div class="help-section">
+        <h3>👤 ログイン・担当者・変更履歴・書類</h3>
+        <ul>
+          <li><strong>👤 ログイン</strong> … 右上から<strong>ログインID + パスワード</strong>でログイン。登録・更新・削除の前に必要です。</li>
+          <li><strong>👥 アカウント管理</strong> … 管理者のみ。アカウント作成時に<strong>一般 / 管理者</strong>を選べます。一覧から権限の変更・削除も可能です（初期 admin は保護）。</li>
+          <li><strong>社内担当者</strong> … 会社登録・編集で設定。会社一覧・会社詳細に表示されます（取引先側ではなく事務所側の担当）。</li>
+          <li><strong>📅 今週の期限</strong> … ダッシュボード上部。7日以内・期限切れの案件を優先表示します。</li>
+          <li><strong>📎 書類チェック</strong> … 会社詳細「申請状況」タブの各行。助成金ごとの必要書類をチェックできます。</li>
+          <li><strong>📝 変更履歴</strong> … 会社詳細「履歴タイムライン」タブの下部。誰がいつ何を変更したかを記録します。</li>
+        </ul>
+        <div class="help-callout">初回利用時は Supabase で <code>supabase_add_features_23568.sql</code> を実行してください（担当者・履歴・書類テーブル）。</div>
+      </div>
+
+      <div class="help-section">
         <h3>✏️ よく使う操作</h3>
         <ul>
           <li>一覧の <strong>✏️</strong> … 案件を編集（状況・日付を更新すると残日数も再計算）</li>
@@ -1312,6 +1629,7 @@
       openModal(isEdit ? '会社編集' : '会社登録', `
     <form onsubmit="saveCompany(event,${isEdit ? `'${co.id}'` : 'null'})">
       ${fRow('会社名', fInput('name', co?.name), '', true)}
+      ${fRow('社内担当者', fInput('internal_assignee', co?.internal_assignee), '事務所側の担当者名')}
       ${fRow('規模', fSelect('size_category', [['', '—'], ['30人未満', '30人未満（〜29人）'], ['30人以上', '30人以上（30人〜）']], co?.size_category || ''))}
       ${fRow('業種', fInput('industry', co?.industry))}
       ${fRow('備考', fTA('notes', co?.notes))}
@@ -1320,12 +1638,19 @@
   `);
     }
     async function saveCompany(e, id) {
-      e.preventDefault(); const fd = new FormData(e.target);
-      const data = { name: fd.get('name'), size_category: fd.get('size_category') || null, industry: fd.get('industry') || null, notes: fd.get('notes') || null };
-      const { error } = id ? await db.from('companies').update(data).eq('id', id) : await db.from('companies').insert(data);
-      if (error) {
-        toast(errMsg(error), 'error'); return;
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
+      const data = { name: fd.get('name'), internal_assignee: fd.get('internal_assignee') || null, size_category: fd.get('size_category') || null, industry: fd.get('industry') || null, notes: fd.get('notes') || null };
+      const { error } = id ? await db.from('companies').update(data).eq('id', id) : null;
+      let companyId = id;
+      if (id) {
+        if (error) { toast(errMsg(error), 'error'); return; }
+      } else {
+        const ins = await db.from('companies').insert(data).select('id').single();
+        if (ins.error) { toast(errMsg(ins.error), 'error'); return; }
+        companyId = ins.data.id;
       }
+      await logAudit({ companyId, tableName: 'companies', recordId: companyId, action: id ? 'update' : 'insert', summary: id ? `会社情報更新: ${data.name}` : `会社新規登録: ${data.name}` });
       toast(id ? '会社情報を更新しました' : '会社を登録しました'); closeModal(); cache = null; router();
     }
 
@@ -1418,7 +1743,8 @@
     }
 
     async function saveCuBatch(e) {
-      e.preventDefault(); const fd = new FormData(e.target);
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
       const tbody = document.getElementById('cu-rows');
       const count = tbody.children.length;
       const base = {
@@ -1436,11 +1762,13 @@
       if (!records.length) { toast('従業員名を入力してください', 'error'); return; }
       const { error } = await db.from('career_up_applications').insert(records);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId: base.company_id, tableName: 'career_up_applications', action: 'insert', summary: `キャリアアップ ${records.length}名 一括登録` });
       toast(`${records.length}名を登録しました`); closeModal(); cache = null; router();
     }
 
     async function saveCu(e, id) {
-      e.preventDefault(); const fd = new FormData(e.target);
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
       const data = {
         company_id: fd.get('company_id'), employee_name: fd.get('employee_name'),
         conversion_date: fd.get('conversion_date') || null, salary_payment_day: parseInt(fd.get('salary_payment_day')) || null,
@@ -1450,11 +1778,9 @@
       };
       const { error } = await db.from('career_up_applications').update(data).eq('id', id);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId: data.company_id, tableName: 'career_up_applications', recordId: id, action: 'update', summary: `キャリアアップ 更新: ${data.employee_name}` });
       toast('更新しました'); closeModal(); cache = null; router();
     }
-
-    // ================================================================
-    //  業務改善フォーム
     // ================================================================
     function showFormBiz(companyId = null, app = null) {
       const isEdit = !!app;
@@ -1479,7 +1805,8 @@
   `);
     }
     async function saveBiz(e, id) {
-      e.preventDefault(); const fd = new FormData(e.target);
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
       const data = {
         company_id: fd.get('company_id'), wage_course: fd.get('wage_course') || null,
         worker_count: fd.get('worker_count') || null, special_category: fd.get('special_category') || null,
@@ -1490,11 +1817,9 @@
       };
       const { error } = id ? await db.from('business_improvement_applications').update(data).eq('id', id) : await db.from('business_improvement_applications').insert(data);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId: data.company_id, tableName: 'business_improvement_applications', recordId: id, action: id ? 'update' : 'insert', summary: id ? '業務改善 更新' : '業務改善 新規登録' });
       toast(id ? '更新しました' : '登録しました'); closeModal(); cache = null; router();
     }
-
-    // ================================================================
-    //  働き方改革フォーム
     // ================================================================
     function showFormWork(companyId = null, app = null) {
       const isEdit = !!app;
@@ -1517,7 +1842,8 @@
   `);
     }
     async function saveWork(e, id) {
-      e.preventDefault(); const fd = new FormData(e.target);
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
       const data = {
         company_id: fd.get('company_id'), goal_type: fd.get('goal_type') || null,
         application_date: fd.get('application_date') || null, completion_date: fd.get('completion_date') || null,
@@ -1527,11 +1853,9 @@
       };
       const { error } = id ? await db.from('work_style_applications').update(data).eq('id', id) : await db.from('work_style_applications').insert(data);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId: data.company_id, tableName: 'work_style_applications', recordId: id, action: id ? 'update' : 'insert', summary: id ? '働き方改革 更新' : '働き方改革 新規登録' });
       toast(id ? '更新しました' : '登録しました'); closeModal(); cache = null; router();
     }
-
-    // ================================================================
-    //  両立支援フォーム
     // ================================================================
     const DUAL_COURSES = {
       '①出生時': ['出生時両立支援（第1種）'],
@@ -1591,7 +1915,8 @@
       if (d2r) { d2r.innerHTML = dl.d2 ? fRow(`<span id="dual-d2-label">${dl.d2}</span>`, fInput('date2', '', 'date')) : ''; }
     }
     async function saveDual(e, id) {
-      e.preventDefault(); const fd = new FormData(e.target);
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
       const data = {
         company_id: fd.get('company_id'), employee_name: fd.get('employee_name'),
         person_in_charge: fd.get('person_in_charge') || null,
@@ -1601,11 +1926,9 @@
       };
       const { error } = id ? await db.from('dual_support_applications').update(data).eq('id', id) : await db.from('dual_support_applications').insert(data);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId: data.company_id, tableName: 'dual_support_applications', recordId: id, action: id ? 'update' : 'insert', summary: id ? `両立支援 更新: ${data.employee_name}` : `両立支援 新規: ${data.employee_name}` });
       toast(id ? '更新しました' : '登録しました'); closeModal(); cache = null; router();
     }
-
-    // ================================================================
-    //  リスキリング支援フォーム
     // ================================================================
     function showFormReskill(companyId = null, app = null) {
       const isEdit = !!app;
@@ -1633,7 +1956,8 @@
   `);
     }
     async function saveReskill(e, id) {
-      e.preventDefault(); const fd = new FormData(e.target);
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
       const data = {
         company_id: fd.get('company_id'), training_name: fd.get('training_name'),
         training_category: fd.get('training_category') || null,
@@ -1646,6 +1970,7 @@
       };
       const { error } = id ? await db.from('reskilling_applications').update(data).eq('id', id) : await db.from('reskilling_applications').insert(data);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId: data.company_id, tableName: 'reskilling_applications', recordId: id, action: id ? 'update' : 'insert', summary: id ? `リスキリング 更新: ${data.training_name}` : `リスキリング 新規: ${data.training_name}` });
       toast(id ? '更新しました' : '登録しました'); closeModal(); cache = null; router();
     }
 
@@ -1683,7 +2008,8 @@
   `);
     }
     async function saveOver65(e, id) {
-      e.preventDefault(); const fd = new FormData(e.target);
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
       const data = {
         company_id: fd.get('company_id'), target_name: fd.get('target_name'),
         course_type: fd.get('course_type'), measure_detail: fd.get('measure_detail') || null,
@@ -1694,11 +2020,9 @@
       };
       const { error } = id ? await db.from('over65_applications').update(data).eq('id', id) : await db.from('over65_applications').insert(data);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId: data.company_id, tableName: 'over65_applications', recordId: id, action: id ? 'update' : 'insert', summary: id ? `65歳超 更新: ${data.target_name}` : `65歳超 新規: ${data.target_name}` });
       toast(id ? '更新しました' : '登録しました'); closeModal(); cache = null; router();
     }
-
-    // ================================================================
-    //  メモ（company_notes）CRUD
     // ================================================================
     function showFormNote(companyId, note = null) {
       const isEdit = !!note;
@@ -1714,10 +2038,12 @@
   `);
     }
     async function saveNote(e, companyId, id) {
-      e.preventDefault(); const fd = new FormData(e.target);
+      e.preventDefault(); if (!requireOperator()) return;
+      const fd = new FormData(e.target);
       const data = { company_id: companyId, note_date: fd.get('note_date'), content: fd.get('content'), author: fd.get('author') || null, subsidy_type: fd.get('subsidy_type') || null };
       const { error } = id ? await db.from('company_notes').update(data).eq('id', id) : await db.from('company_notes').insert(data);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId, tableName: 'company_notes', recordId: id, action: id ? 'update' : 'insert', summary: id ? 'メモ更新' : 'メモ追加' });
       toast(id ? '更新しました' : 'メモを追加しました'); closeModal();
       history.replaceState(null, '', `#company/${companyId}/history`);
       await refreshCompanyPage(companyId, 'history');
@@ -1815,9 +2141,13 @@
     //  削除
     // ================================================================
     async function deleteRecord(table, id) {
+      if (!requireOperator()) return;
       if (!confirm('このレコードを削除しますか？')) return;
+      const { data: row } = await db.from(table).select('company_id').eq('id', id).maybeSingle();
+      const companyId = table === 'companies' ? id : row?.company_id;
       const { error } = await db.from(table).delete().eq('id', id);
       if (error) { toast(errMsg(error), 'error'); return; }
+      await logAudit({ companyId, tableName: table, recordId: id, action: 'delete', summary: `${table} レコード削除` });
       toast('削除しました'); closeModal(); cache = null; router();
     }
 
@@ -2191,6 +2521,7 @@
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">${modeTabs}</div>
+    <div id="dash-weekly">${renderWeeklyPanel(data)}</div>
     <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
       <input id="dash-search" type="text" placeholder="🔍 会社名で絞り込み..."
         style="flex:1;min-width:200px;max-width:360px;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px"
@@ -2272,6 +2603,7 @@
         <div style="flex:1;min-width:0">
           <div style="font-size:15px;font-weight:700;color:#111827;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${co.name}</div>
           <div style="font-size:11px;color:#9ca3af">
+            ${co.internal_assignee ? `<span style="color:#6366f1;font-weight:500">👤 ${co.internal_assignee}</span> · ` : ''}
             ${[co.size_category, co.industry].filter(Boolean).join(' · ') || '規模・業種未設定'}
           </div>
         </div>
@@ -2314,7 +2646,7 @@
     //  会社詳細（タブ付き）
     // ================================================================
     function renderCompanyDetail(det, activeTab = 'history') {
-      const { company, careerUp, biz, work, dual, reskill, over65, notes } = det;
+      const { company, careerUp, biz, work, dual, reskill, over65, notes, auditLogs } = det;
       if (!company) return '<div style="text-align:center;padding:40px;color:#9ca3af">会社が見つかりません</div>';
       const total = careerUp.length + biz.length + work.length + dual.length + reskill.length + over65.length;
       const cid = company.id;
@@ -2332,6 +2664,7 @@
         <div style="flex:1;min-width:0">
           <h1 style="font-size:20px;font-weight:700;color:#111827;margin-bottom:4px">${company.name}</h1>
           <div style="font-size:12px;color:#9ca3af;display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+            ${company.internal_assignee ? `<span>👤 社内担当: <strong style="color:#374151">${company.internal_assignee}</strong></span>` : ''}
             ${company.size_category ? `<span>📏 ${company.size_category}</span>` : ''}
             ${company.industry ? `<span>🏭 ${company.industry}</span>` : ''}
             ${company.notes ? `<span style="color:#6b7280">📝 ${company.notes}</span>` : ''}
@@ -2368,6 +2701,7 @@
       <div style="max-width:680px">
         ${renderTimeline(timeline, cid)}
       </div>
+      ${renderAuditSection(auditLogs)}
     </div>
 
     <!-- 申請状況タブ -->
@@ -2388,7 +2722,7 @@
       document.querySelectorAll('.tab-btn').forEach((b, i) => {
         b.classList.toggle('active', (i === 0 && tab === 'history') || (i === 1 && tab === 'status'));
       });
-      history.replaceState(null, '', `#company/${cid}${tab === 'history' ? '/history' : ''}`);
+      history.replaceState(null, '', `#company/${cid}${tab === 'status' ? '/status' : '/history'}`);
     }
 
     function sectionCard(color, title, addFn, inner) {
@@ -2416,7 +2750,7 @@
       <td style="font-family:monospace;font-size:12px">${app.is_priority_worker ? fmt(d.sd) : '—'}</td>
       <td>${app.is_priority_worker ? deadlineBadge(d.sDays) : '—'}</td>
       <td>${app.is_priority_worker ? stBadge(app.status_second) : '—'}</td>
-      <td><button class="btn-edit" onclick='showFormCu(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('career_up', app, companyId, app.employee_name)}<button class="btn-edit" onclick='showFormCu(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('purple', '👔 キャリアアップ助成金（正社員化コース）', `showFormCu('${companyId}')`, `
@@ -2440,7 +2774,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormBiz(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('biz', app, companyId, app.wage_course || '業務改善')}<button class="btn-edit" onclick='showFormBiz(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('blue', '🏭 業務改善助成金（令和8年度: 50/70/90円コース）', `showFormBiz('${companyId}')`, `
@@ -2466,7 +2800,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormWork(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('work', app, companyId, app.goal_type || '働き方改革')}<button class="btn-edit" onclick='showFormWork(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('teal', '⏰ 働き方改革推進支援助成金（令和8年度）', `showFormWork('${companyId}')`, `
@@ -2492,7 +2826,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
       <td>${deadlineBadge(d.days)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormDual(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('dual', app, companyId, app.employee_name)}<button class="btn-edit" onclick='showFormDual(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('pink', '👶 両立支援等助成金（6コース）', `showFormDual('${companyId}')`, `
@@ -2517,7 +2851,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
       <td>${deadlineBadge(d.supDays)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormReskill(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('reskill', app, companyId, app.training_name)}<button class="btn-edit" onclick='showFormReskill(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('orange', '📚 人材開発支援助成金（事業展開等リスキリング支援コース）', `showFormReskill('${companyId}')`, `
@@ -2542,7 +2876,7 @@
       <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
       <td>${deadlineBadge(d.days)}</td>
       <td>${stBadge(app.status)}</td>
-      <td><button class="btn-edit" onclick='showFormOver65(null,${esc})'>✏️</button></td>
+      <td style="white-space:nowrap">${docCheckBtn('over65', app, companyId, app.target_name)}<button class="btn-edit" onclick='showFormOver65(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('gray', '👴 65歳超雇用推進助成金', `showFormOver65('${companyId}')`, `
@@ -2829,7 +3163,7 @@
         if (hash.startsWith('#company/')) {
           const parts = decodeURIComponent(hash.slice('#company/'.length)).split('/');
           const id = parts[0];
-          const tab = parts[1] === 'history' ? 'history' : 'history'; // デフォルト: 履歴タブ
+          const tab = parts[1] === 'status' ? 'status' : 'history';
           const det = await fetchCompanyDetail(id);
           if (!cache) { cache = await fetchAll(); }
           content.innerHTML = renderCompanyDetail(det, tab);
@@ -2864,6 +3198,7 @@
 
     window.addEventListener('hashchange', router);
     if (!location.hash || location.hash === '#') location.hash = '#dashboard';
+    updateOperatorNav();
     router();
   </script>
 </body>
