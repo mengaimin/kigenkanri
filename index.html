@@ -94,6 +94,21 @@
     .dash-tab { background:#f3f4f6;border:1px solid #e5e7eb;border-radius:7px;padding:6px 14px;font-size:12px;font-weight:500;cursor:pointer;color:#6b7280;white-space:nowrap;transition:all 0.12s; }
     .dash-tab:hover { background:#e5e7eb;color:#374151; }
     .dash-tab.active { background:#2563eb;color:white;border-color:#2563eb; }
+    .dash-mode-tab { background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;color:#6b7280;white-space:nowrap;transition:all 0.12s; }
+    .dash-mode-tab:hover { border-color:#93c5fd;color:#2563eb; }
+    .dash-mode-tab.active { background:#1e293b;color:#fff;border-color:#1e293b; }
+    .status-dropdown { position:relative;display:inline-block; }
+    .status-dropdown-btn { display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;min-width:180px; }
+    .status-dropdown-btn:hover { border-color:#93c5fd; }
+    .status-dropdown.open .status-dropdown-btn { border-color:#2563eb;box-shadow:0 0 0 2px #dbeafe; }
+    .status-dropdown-menu { display:none;position:absolute;top:calc(100% + 4px);left:0;min-width:260px;max-height:340px;overflow-y:auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:100;padding:6px; }
+    .status-dropdown.open .status-dropdown-menu { display:block; }
+    .status-dd-group { padding:8px 10px 4px;font-size:10px;font-weight:700;color:#9ca3af; }
+    .status-dd-item { display:flex;align-items:center;justify-content:space-between;width:100%;padding:7px 10px;border:none;background:none;border-radius:6px;cursor:pointer;font-size:12px;text-align:left;gap:8px; }
+    .status-dd-item:hover { background:#f3f4f6; }
+    .status-dd-item.active { background:#eff6ff; }
+    .status-chip-count { background:#f3f4f6;color:#6b7280;border-radius:10px;padding:0 6px;font-size:10px;font-weight:700;flex-shrink:0; }
+    .status-dd-item.active .status-chip-count { background:#bfdbfe;color:#1e40af; }
 
     /* Company link chip */
     .co-link { display:inline-flex;align-items:center;gap:5px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:20px;padding:3px 11px 3px 8px;font-size:12px;font-weight:600;text-decoration:none;white-space:nowrap;transition:background 0.1s; }
@@ -147,6 +162,20 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const { createClient } = window.supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// 表示設定（localStorage に保存）
+const HIDE_EXPIRED_KEY = 'kikan_hide_expired';
+function getHideExpired() { return localStorage.getItem(HIDE_EXPIRED_KEY) === 'true'; }
+function setHideExpired(v) { localStorage.setItem(HIDE_EXPIRED_KEY, v ? 'true' : 'false'); }
+function toggleHideExpired() { setHideExpired(!getHideExpired()); router(); }
+function isExpiredDeadline(days) { return days !== null && days !== undefined && days < 0; }
+function hideExpiredToggle(extraStyle='') {
+  const on = getHideExpired();
+  return `<label style="display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#374151;cursor:pointer;user-select:none;${extraStyle}">
+    <input type="checkbox"${on ? ' checked' : ''} onchange="toggleHideExpired()" style="width:15px;height:15px;cursor:pointer;accent-color:#2563eb">
+    期限切れを非表示
+  </label>`;
+}
 
 // ================================================================
 //  日付ユーティリティ
@@ -246,7 +275,7 @@ async function fetchAll() {
     db.from('dual_support_applications').select('*,company:companies(id,name,size_category)').order('created_at',{ascending:false}),
     db.from('companies').select('*').order('name'),
   ]);
-  if(cu.error)throw new Error(cu.error.message);
+  if(cu.error)throw new Error(errMsg(cu.error));
   return { careerUp:cu.data||[], biz:bi.data||[], work:ws.data||[], dual:ds.data||[], companies:co.data||[] };
 }
 async function fetchCompanyDetail(id) {
@@ -275,7 +304,24 @@ function overlayClick(e) { if(e.target===document.getElementById('modal-overlay'
 function toast(msg,type='success') {
   const t=document.createElement('div');
   t.className='toast'; t.style.background=type==='error'?'#dc2626':'#16a34a'; t.textContent=msg;
-  document.body.appendChild(t); setTimeout(()=>t.remove(),3000);
+  document.body.appendChild(t); setTimeout(()=>t.remove(),4000);
+}
+function errMsg(error) {
+  if(!error) return '不明なエラーが発生しました';
+  const m=error.message||''; const c=error.code||'';
+  if(m.includes('row-level security')||m.includes('violates row-level'))
+    return 'アクセス権限エラー: Supabase のテーブルで RLS が有効になっています。SQL エディターで DISABLE ROW LEVEL SECURITY を実行してください';
+  if(c==='23505') return 'この名前はすでに登録されています（重複エラー）';
+  if(c==='23503') return '関連データが存在するため削除できません';
+  if(c==='23514') return '入力値が許可された範囲外です。入力内容を確認してください';
+  if(c==='42P01') return 'テーブルが見つかりません。データベースのセットアップを確認してください';
+  if(m.includes('Failed to fetch')||m.includes('NetworkError')||m.includes('fetch'))
+    return 'ネットワークエラーが発生しました。接続を確認してください';
+  if(m.includes('JWT')||m.includes('token'))
+    return '認証エラーが発生しました。ページを再読み込みしてください';
+  if(m.includes('Invalid API key'))
+    return 'APIキーが無効です。設定を確認してください';
+  return 'エラーが発生しました: '+m;
 }
 
 // ================================================================
@@ -323,8 +369,7 @@ async function saveCompany(e,id) {
   const data={name:fd.get('name'),size_category:fd.get('size_category')||null,industry:fd.get('industry')||null,notes:fd.get('notes')||null};
   const {error}=id ? await db.from('companies').update(data).eq('id',id) : await db.from('companies').insert(data);
   if(error){
-    const msg=error.code==='23505'?'この会社名はすでに登録されています':'エラー: '+error.message;
-    toast(msg,'error'); return;
+    toast(errMsg(error),'error'); return;
   }
   toast(id?'会社情報を更新しました':'会社を登録しました'); closeModal(); cache=null; router();
 }
@@ -435,7 +480,7 @@ async function saveCuBatch(e) {
   })).filter(r=>r.employee_name?.trim());
   if(!records.length){toast('従業員名を入力してください','error');return;}
   const {error}=await db.from('career_up_applications').insert(records);
-  if(error){toast('エラー: '+error.message,'error');return;}
+  if(error){toast(errMsg(error),'error');return;}
   toast(`${records.length}名を登録しました`); closeModal(); cache=null; router();
 }
 
@@ -449,7 +494,7 @@ async function saveCu(e,id) {
     notes:fd.get('notes')||null,
   };
   const {error}=await db.from('career_up_applications').update(data).eq('id',id);
-  if(error){toast('エラー: '+error.message,'error');return;}
+  if(error){toast(errMsg(error),'error');return;}
   toast('更新しました'); closeModal(); cache=null; router();
 }
 
@@ -489,7 +534,7 @@ async function saveBiz(e,id) {
     status:fd.get('status'), notes:fd.get('notes')||null,
   };
   const {error}=id ? await db.from('business_improvement_applications').update(data).eq('id',id) : await db.from('business_improvement_applications').insert(data);
-  if(error){toast('エラー: '+error.message,'error');return;}
+  if(error){toast(errMsg(error),'error');return;}
   toast(id?'更新しました':'登録しました'); closeModal(); cache=null; router();
 }
 
@@ -526,7 +571,7 @@ async function saveWork(e,id) {
     status:fd.get('status'), notes:fd.get('notes')||null,
   };
   const {error}=id ? await db.from('work_style_applications').update(data).eq('id',id) : await db.from('work_style_applications').insert(data);
-  if(error){toast('エラー: '+error.message,'error');return;}
+  if(error){toast(errMsg(error),'error');return;}
   toast(id?'更新しました':'登録しました'); closeModal(); cache=null; router();
 }
 
@@ -600,7 +645,7 @@ async function saveDual(e,id) {
     status:fd.get('status'), progress:fd.get('progress')||null, notes:fd.get('notes')||null,
   };
   const {error}=id ? await db.from('dual_support_applications').update(data).eq('id',id) : await db.from('dual_support_applications').insert(data);
-  if(error){toast('エラー: '+error.message,'error');return;}
+  if(error){toast(errMsg(error),'error');return;}
   toast(id?'更新しました':'登録しました'); closeModal(); cache=null; router();
 }
 
@@ -624,7 +669,7 @@ async function saveNote(e,companyId,id) {
   e.preventDefault(); const fd=new FormData(e.target);
   const data={company_id:companyId,note_date:fd.get('note_date'),content:fd.get('content'),author:fd.get('author')||null,subsidy_type:fd.get('subsidy_type')||null};
   const {error}=id ? await db.from('company_notes').update(data).eq('id',id) : await db.from('company_notes').insert(data);
-  if(error){toast('エラー: '+error.message,'error');return;}
+  if(error){toast(errMsg(error),'error');return;}
   toast(id?'更新しました':'メモを追加しました'); closeModal();
   history.replaceState(null,'',`#company/${companyId}/history`);
   await refreshCompanyPage(companyId,'history');
@@ -711,14 +756,101 @@ function renderTimeline(events,companyId) {
 async function deleteRecord(table,id) {
   if(!confirm('このレコードを削除しますか？')) return;
   const {error}=await db.from(table).delete().eq('id',id);
-  if(error){toast('削除エラー: '+error.message,'error');return;}
+  if(error){toast(errMsg(error),'error');return;}
   toast('削除しました'); closeModal(); cache=null; router();
 }
 
 // ================================================================
 //  ダッシュボード
 // ================================================================
-let dashFilter = { type:'all', query:'' };
+let dashFilter = { mode:'deadline', type:'all', status:'all', query:'' };
+
+const STATUS_ORDER = [
+  '未申請','申請待ち','申請済','交付申請済','交付決定済','事業実施中',
+  '事業完了（報告待）','事業実績報告済','支給申請済','承認済','承認済（助成金受領）',
+  '不承認','育休中','介護休業中','制度利用中','支給申請待ち',
+];
+const STATUS_GROUPS = [
+  { label:'未対応',     statuses:['未申請','申請待ち','支給申請待ち'] },
+  { label:'申請・交付', statuses:['申請済','交付申請済','交付決定済'] },
+  { label:'事業実施',   statuses:['事業実施中','事業完了（報告待）','事業実績報告済'] },
+  { label:'支給・完了', statuses:['支給申請済','承認済','承認済（助成金受領）'] },
+  { label:'休業・利用中', statuses:['育休中','介護休業中','制度利用中'] },
+  { label:'その他',     statuses:['不承認'] },
+];
+
+function getStatusCounts(items) {
+  const counts={};
+  items.forEach(i=>{ const s=i.status||'—'; counts[s]=(counts[s]||0)+1; });
+  return counts;
+}
+
+function renderStatusDropdown(items, activeStatus) {
+  const counts=getStatusCounts(items);
+  const total=items.length;
+  const labelBadge=activeStatus==='all'
+    ? '<span style="color:#374151;font-weight:500">すべて</span>'
+    : `<span class="stbadge" style="${STATUS_STYLE[activeStatus]||'background:#f3f4f6;color:#4b5563'};font-size:11px">${activeStatus}</span>`;
+  let menu=`<button type="button" class="status-dd-item${activeStatus==='all'?' active':''}" onclick="pickDashStatus('all')">
+    <span style="font-weight:500">すべて</span><span class="status-chip-count">${total}</span>
+  </button>`;
+  const grouped=new Set();
+  STATUS_GROUPS.forEach(group=>{
+    const list=group.statuses.filter(s=>counts[s]);
+    if(!list.length) return;
+    list.forEach(s=>grouped.add(s));
+    menu+=`<div class="status-dd-group">${group.label}</div>`;
+    list.forEach(s=>{
+      const st=STATUS_STYLE[s]||'background:#f3f4f6;color:#4b5563';
+      menu+=`<button type="button" class="status-dd-item${activeStatus===s?' active':''}" onclick='pickDashStatus(${JSON.stringify(s)})'>
+        <span class="stbadge" style="${st};font-size:11px">${s}</span>
+        <span class="status-chip-count">${counts[s]}</span>
+      </button>`;
+    });
+  });
+  const orphans=Object.keys(counts).filter(s=>!grouped.has(s)).sort((a,b)=>{
+    const ia=STATUS_ORDER.indexOf(a), ib=STATUS_ORDER.indexOf(b);
+    if(ia>=0&&ib>=0) return ia-ib;
+    return counts[b]-counts[a];
+  });
+  if(orphans.length){
+    menu+=`<div class="status-dd-group">その他</div>`;
+    orphans.forEach(s=>{
+      const st=STATUS_STYLE[s]||'background:#f3f4f6;color:#4b5563';
+      menu+=`<button type="button" class="status-dd-item${activeStatus===s?' active':''}" onclick='pickDashStatus(${JSON.stringify(s)})'>
+        <span class="stbadge" style="${st};font-size:11px">${s}</span>
+        <span class="status-chip-count">${counts[s]}</span>
+      </button>`;
+    });
+  }
+  return `<div class="status-dropdown" id="dash-status-dropdown">
+    <button type="button" class="status-dropdown-btn" onclick="toggleStatusDropdown(event)">
+      <span style="font-size:11px;color:#6b7280">申請状況</span>
+      ${labelBadge}
+      <span style="margin-left:auto;color:#9ca3af;font-size:10px">▼</span>
+    </button>
+    <div class="status-dropdown-menu">${menu}</div>
+  </div>`;
+}
+
+function toggleStatusDropdown(e) {
+  e.stopPropagation();
+  const dd=document.getElementById('dash-status-dropdown');
+  if(!dd) return;
+  const willOpen=!dd.classList.contains('open');
+  document.querySelectorAll('.status-dropdown.open').forEach(el=>el.classList.remove('open'));
+  if(willOpen){
+    dd.classList.add('open');
+    setTimeout(()=>document.addEventListener('click',closeStatusDropdown,{once:true}),0);
+  }
+}
+function closeStatusDropdown() {
+  document.getElementById('dash-status-dropdown')?.classList.remove('open');
+}
+function pickDashStatus(status) {
+  closeStatusDropdown();
+  setDashStatus(status);
+}
 
 function renderDashCards(items) {
   return [
@@ -733,8 +865,24 @@ function renderDashCards(items) {
   </div>`).join('');
 }
 
+
 function renderDashRows(items) {
-  if(!items.length) return '<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>';
+  if(!items.length) return `<tr><td colspan="${dashFilter.mode==='status'?8:7}" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>`;
+  if(dashFilter.mode==='status') {
+    return items.map(item=>{
+      const rowBg=item.days===null?'':item.days<0?'background:#fff5f5':item.days<=7?'background:#fff8f0':item.days<=30?'background:#fefce8':'';
+      return `<tr style="${rowBg}">
+        <td><span class="stbadge" style="${TYPE_STYLE[item.type]}">${TYPE_LABEL[item.type]}</span></td>
+        <td><a class="co-link" href="#company/${item.companyId}">${item.companyName}</a></td>
+        <td style="color:#6b7280">${item.target||'—'}</td>
+        <td style="color:#6b7280;font-size:12px">${item.detail||'—'}</td>
+        <td style="font-size:12px;color:#6b7280">${item.statusRound||'—'}</td>
+        <td>${stBadge(item.status)}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(item.deadline)}</td>
+        <td>${deadlineBadge(item.days)}</td>
+      </tr>`;
+    }).join('');
+  }
   return items.map(item=>{
     const rowBg=item.days===null?'':item.days<0?'background:#fff5f5':item.days<=7?'background:#fff8f0':item.days<=30?'background:#fefce8':'';
     return `<tr style="${rowBg}">
@@ -749,15 +897,111 @@ function renderDashRows(items) {
   }).join('');
 }
 
-function filterDashItems(all) {
+function buildStatusItems(data) {
+  const items=[];
+  data.careerUp.forEach(app=>{
+    const d=calcCareerUp(app); const co=app.company?.name||''; const cid=app.company_id;
+    items.push({
+      type:'career_up',companyName:co,companyId:cid,target:app.employee_name,
+      detail:app.is_priority_worker?'重点支援対象者':'正社員化',
+      statusRound:'1回目',status:app.status_first||'未申請',
+      deadline:d.fd,days:d.fDays,
+    });
+    if(app.is_priority_worker){
+      items.push({
+        type:'career_up',companyName:co,companyId:cid,target:app.employee_name,
+        detail:'重点支援対象者（2回目）',
+        statusRound:'2回目',status:app.status_second||'未申請',
+        deadline:d.sd,days:d.sDays,
+      });
+    }
+  });
+  data.biz.forEach(app=>{
+    const d=calcBiz(app); const co=app.company?.name||''; const cid=app.company_id;
+    items.push({
+      type:'biz',companyName:co,companyId:cid,target:null,
+      detail:[app.wage_course,app.worker_count].filter(Boolean).join(' · ')||'—',
+      statusRound:'—',status:app.status||'未申請',
+      deadline:d.supLimit||d.compLimit,days:d.supDays??d.compDays,
+    });
+  });
+  data.work.forEach(app=>{
+    const d=calcWork(app); const co=app.company?.name||''; const cid=app.company_id;
+    items.push({
+      type:'work',companyName:co,companyId:cid,target:null,
+      detail:app.goal_type||'—',
+      statusRound:'—',status:app.status||'未申請',
+      deadline:d.supLimit||d.appLimit,days:d.supDays??d.appDays,
+    });
+  });
+  data.dual.forEach(app=>{
+    const d=calcDual(app); const co=app.company?.name||''; const cid=app.company_id;
+    items.push({
+      type:'dual',companyName:co,companyId:cid,target:app.employee_name,
+      detail:app.support_course||app.course_type||'—',
+      statusRound:'—',status:app.status||'未申請',
+      deadline:d.deadline,days:d.days,
+    });
+  });
+  return items.sort((a,b)=>{
+    const sa=STATUS_ORDER.indexOf(a.status), sb=STATUS_ORDER.indexOf(b.status);
+    if(sa>=0&&sb>=0&&sa!==sb) return sa-sb;
+    if(sa>=0&&sb<0) return -1; if(sa<0&&sb>=0) return 1;
+    return (a.days??99999)-(b.days??99999);
+  });
+}
+
+function getDashBaseItems(data) {
+  return dashFilter.mode==='status' ? buildStatusItems(data) : buildDeadlineItems(data);
+}
+
+function filterDashItems(all, opts={}) {
+  const skipStatus=opts.skipStatus;
   let items=all;
+  if(getHideExpired()) items=items.filter(i=>!isExpiredDeadline(i.days));
   if(dashFilter.type!=='all') items=items.filter(i=>i.type===dashFilter.type);
-  if(dashFilter.query)        items=items.filter(i=>i.companyName.includes(dashFilter.query));
+  if(!skipStatus&&dashFilter.status!=='all') items=items.filter(i=>(i.status||'—')===dashFilter.status);
+  if(dashFilter.query) items=items.filter(i=>i.companyName.includes(dashFilter.query));
   return items;
+}
+
+function isCareerUpExpired(app) {
+  const d=calcCareerUp(app);
+  if(app.status_first!=='承認済'&&isExpiredDeadline(d.fDays)) return true;
+  if(app.is_priority_worker&&app.status_second!=='承認済'&&isExpiredDeadline(d.sDays)) return true;
+  return false;
+}
+function isBizExpired(app) {
+  const d=calcBiz(app);
+  return isExpiredDeadline(d.compDays)||isExpiredDeadline(d.supDays);
+}
+function isWorkExpired(app) {
+  const d=calcWork(app);
+  return isExpiredDeadline(d.appDays)||isExpiredDeadline(d.supDays);
+}
+function isDualExpired(app) {
+  const d=calcDual(app);
+  return isExpiredDeadline(d.days);
+}
+function filterExpiredApps(apps,type) {
+  if(!getHideExpired()) return apps;
+  const fn={career_up:isCareerUpExpired,biz:isBizExpired,work:isWorkExpired,dual:isDualExpired}[type];
+  return fn ? apps.filter(a=>!fn(a)) : apps;
 }
 
 function setDashType(type) {
   dashFilter.type=type;
+  updateDash();
+}
+
+function setDashStatus(status) {
+  dashFilter.status=status;
+  updateDash();
+}
+
+function setDashMode(mode) {
+  dashFilter.mode=mode;
+  dashFilter.status='all';
   updateDash();
 }
 
@@ -768,11 +1012,23 @@ function doDashSearch() {
 
 function updateDash() {
   if(!cache) return;
-  const items=filterDashItems(buildDeadlineItems(cache));
-  document.getElementById('dash-cards').innerHTML=renderDashCards(items);
+  const baseItems=getDashBaseItems(cache);
+  const forStatusChips=filterDashItems(baseItems,{skipStatus:true});
+  const items=filterDashItems(baseItems);
+  const cardsEl=document.getElementById('dash-cards');
+  if(cardsEl) cardsEl.style.display=dashFilter.mode==='deadline'?'grid':'none';
+  if(cardsEl&&dashFilter.mode==='deadline') cardsEl.innerHTML=renderDashCards(items);
+  const statusEl=document.getElementById('dash-status-filter');
+  if(statusEl) statusEl.innerHTML=renderStatusDropdown(forStatusChips,dashFilter.status);
   document.getElementById('dash-count').textContent=items.length+' 件';
+  document.getElementById('dash-table-title').textContent=dashFilter.mode==='status'?'📋 申請状況一覧':'⚠️ 要対応期限一覧';
+  const thead=document.getElementById('dash-table-head');
+  if(thead) thead.innerHTML=dashFilter.mode==='status'
+    ? '<tr><th>助成金</th><th>会社名</th><th>対象者</th><th>内容</th><th>回次</th><th>申請状況</th><th>主要期限</th><th>残日数</th></tr>'
+    : '<tr><th>助成金</th><th>会社名</th><th>対象者</th><th>期限種別</th><th>期限日</th><th>残日数</th><th>申請状況</th></tr>';
   document.getElementById('dash-table-body').innerHTML=renderDashRows(items);
   document.querySelectorAll('.dash-tab').forEach(b=>b.classList.toggle('active',b.dataset.type===dashFilter.type));
+  document.querySelectorAll('.dash-mode-tab').forEach(b=>b.classList.toggle('active',b.dataset.mode===dashFilter.mode));
 }
 
 function buildDeadlineItems(data) {
@@ -800,8 +1056,10 @@ function buildDeadlineItems(data) {
 }
 
 function renderDashboard(data) {
-  dashFilter={type:'all',query:''};
-  const all=buildDeadlineItems(data);
+  dashFilter={mode:'deadline',type:'all',status:'all',query:''};
+  const baseItems=getDashBaseItems(data);
+  const forStatusChips=filterDashItems(baseItems,{skipStatus:true});
+  const all=filterDashItems(baseItems);
   const todayStr=new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'short'});
 
   const tabDefs=[
@@ -811,20 +1069,31 @@ function renderDashboard(data) {
     {type:'work',      label:'⏰ 働き方改革'},
     {type:'dual',      label:'👶 両立支援'},
   ];
+  const typeBase=filterDashItems(baseItems,{skipStatus:true});
   const tabs=tabDefs.map(t=>{
-    const cnt=t.type==='all'?all.length:all.filter(i=>i.type===t.type).length;
+    const cnt=t.type==='all'?typeBase.length:typeBase.filter(i=>i.type===t.type).length;
     return `<button class="dash-tab${t.type==='all'?' active':''}" data-type="${t.type}" onclick="setDashType('${t.type}')">${t.label} <span style="opacity:0.7;font-size:11px">${cnt}</span></button>`;
   }).join('');
 
+  const modeTabs=[
+    {mode:'deadline',label:'⚠️ 期限一覧'},
+    {mode:'status',  label:'📋 申請状況'},
+  ].map(m=>`<button class="dash-mode-tab${m.mode==='deadline'?' active':''}" data-mode="${m.mode}" onclick="setDashMode('${m.mode}')">${m.label}</button>`).join('');
+
   return `
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <h1 style="font-size:18px;font-weight:700;color:#111827">📊 ダッシュボード</h1>
-      <span style="font-size:12px;color:#9ca3af">${todayStr}</span>
+      <div style="display:flex;align-items:center;gap:14px">
+        ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
+        <span style="font-size:12px;color:#9ca3af">${todayStr}</span>
+      </div>
     </div>
-    <div style="margin-bottom:16px">
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">${modeTabs}</div>
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
       <input id="dash-search" type="text" placeholder="🔍 会社名で絞り込み..."
-        style="width:100%;max-width:360px;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px"
+        style="flex:1;min-width:200px;max-width:360px;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px"
         oninput="doDashSearch()">
+      <div id="dash-status-filter">${renderStatusDropdown(forStatusChips,'all')}</div>
     </div>
     <div id="dash-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
       ${renderDashCards(all)}
@@ -832,12 +1101,12 @@ function renderDashboard(data) {
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${tabs}</div>
     <div class="card">
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-        <span>⚠️ 要対応期限一覧</span>
+        <span id="dash-table-title">⚠️ 要対応期限一覧</span>
         <span id="dash-count" style="font-size:12px;color:#6b7280">${all.length} 件</span>
       </div>
       <div style="overflow-x:auto">
         <table>
-          <thead><tr><th>助成金</th><th>会社名</th><th>対象者</th><th>期限種別</th><th>期限日</th><th>残日数</th><th>申請状況</th></tr></thead>
+          <thead id="dash-table-head"><tr><th>助成金</th><th>会社名</th><th>対象者</th><th>期限種別</th><th>期限日</th><th>残日数</th><th>申請状況</th></tr></thead>
           <tbody id="dash-table-body">${renderDashRows(all)}</tbody>
         </table>
       </div>
@@ -858,7 +1127,8 @@ function renderCompanies(data,query) {
   data.work.forEach(a=>inc('ws',a.company_id));
   data.dual.forEach(a=>inc('ds',a.company_id));
   // compute urgency per company from deadline items
-  const allItems=buildDeadlineItems(data);
+  let allItems=buildDeadlineItems(data);
+  if(getHideExpired()) allItems=allItems.filter(i=>!isExpiredDeadline(i.days));
   const urgMap={};
   allItems.forEach(i=>{
     if(!urgMap[i.companyId]) urgMap[i.companyId]={urgent:0,warning:0};
@@ -913,9 +1183,12 @@ function renderCompanies(data,query) {
   }).join('');
 
   return `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <h1 style="font-size:18px;font-weight:700;color:#111827">🏢 会社一覧 <span style="font-size:13px;color:#9ca3af;font-weight:400">${companies.length}社</span></h1>
-      <button class="btn-add" onclick="showFormCompany()">＋ 会社登録</button>
+      <div style="display:flex;align-items:center;gap:10px">
+        ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
+        <button class="btn-add" onclick="showFormCompany()">＋ 会社登録</button>
+      </div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:16px">
       <input id="search-input" type="text" placeholder="🔍 会社名で絞り込み..." value="${query}"
@@ -1122,7 +1395,8 @@ function addBtn(fn,label) { return `<button class="btn-add" onclick="${fn}">＋ 
 
 function renderAllCareerUp(apps,companies) {
   const coMap=Object.fromEntries(companies.map(c=>[c.id,c]));
-  const rows=apps.map(app=>{
+  const filtered=filterExpiredApps(apps,'career_up');
+  const rows=filtered.map(app=>{
     const co=coMap[app.company_id]; const d=calcCareerUp(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
     return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name||'—'}</a></td>
@@ -1138,9 +1412,16 @@ function renderAllCareerUp(apps,companies) {
       <td><button class="btn-edit" onclick='showFormCu(null,${esc})'>✏️</button></td>
     </tr>`;
   }).join('');
-  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-    <h1 style="font-size:18px;font-weight:700;color:#111827">👔 キャリアアップ助成金 — 全件</h1>
-    ${addBtn('showFormCu()','新規登録')}
+  const hidden=apps.length-filtered.length;
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <h1 style="font-size:18px;font-weight:700;color:#111827">👔 キャリアアップ助成金 — 全件
+      <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
+      ${hidden?`<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>`:''}
+    </h1>
+    <div style="display:flex;align-items:center;gap:10px">
+      ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
+      ${addBtn('showFormCu()','新規登録')}
+    </div>
   </div>
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>従業員名</th><th>転換日</th><th>重点</th>
@@ -1152,7 +1433,8 @@ function renderAllCareerUp(apps,companies) {
 
 function renderAllBiz(apps,companies) {
   const coMap=Object.fromEntries(companies.map(c=>[c.id,c]));
-  const rows=apps.map(app=>{
+  const filtered=filterExpiredApps(apps,'biz');
+  const rows=filtered.map(app=>{
     const co=coMap[app.company_id]; const d=calcBiz(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
     return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name||'—'}</a></td>
@@ -1165,9 +1447,16 @@ function renderAllBiz(apps,companies) {
       <td><button class="btn-edit" onclick='showFormBiz(null,${esc})'>✏️</button></td>
     </tr>`;
   }).join('');
-  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-    <h1 style="font-size:18px;font-weight:700;color:#111827">🏭 業務改善助成金 — 全件</h1>
-    ${addBtn('showFormBiz()','新規登録')}
+  const hidden=apps.length-filtered.length;
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <h1 style="font-size:18px;font-weight:700;color:#111827">🏭 業務改善助成金 — 全件
+      <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
+      ${hidden?`<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>`:''}
+    </h1>
+    <div style="display:flex;align-items:center;gap:10px">
+      ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
+      ${addBtn('showFormBiz()','新規登録')}
+    </div>
   </div>
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>コース</th><th>人数</th>
@@ -1178,7 +1467,8 @@ function renderAllBiz(apps,companies) {
 
 function renderAllWork(apps,companies) {
   const coMap=Object.fromEntries(companies.map(c=>[c.id,c]));
-  const rows=apps.map(app=>{
+  const filtered=filterExpiredApps(apps,'work');
+  const rows=filtered.map(app=>{
     const co=coMap[app.company_id]; const d=calcWork(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
     return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name||'—'}</a></td>
@@ -1192,9 +1482,16 @@ function renderAllWork(apps,companies) {
       <td><button class="btn-edit" onclick='showFormWork(null,${esc})'>✏️</button></td>
     </tr>`;
   }).join('');
-  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-    <h1 style="font-size:18px;font-weight:700;color:#111827">⏰ 働き方改革推進支援助成金 — 全件</h1>
-    ${addBtn('showFormWork()','新規登録')}
+  const hidden=apps.length-filtered.length;
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <h1 style="font-size:18px;font-weight:700;color:#111827">⏰ 働き方改革推進支援助成金 — 全件
+      <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
+      ${hidden?`<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>`:''}
+    </h1>
+    <div style="display:flex;align-items:center;gap:10px">
+      ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
+      ${addBtn('showFormWork()','新規登録')}
+    </div>
   </div>
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>成果目標</th><th>交付申請日</th>
@@ -1205,7 +1502,8 @@ function renderAllWork(apps,companies) {
 
 function renderAllDual(apps,companies) {
   const coMap=Object.fromEntries(companies.map(c=>[c.id,c]));
-  const rows=apps.map(app=>{
+  const filtered=filterExpiredApps(apps,'dual');
+  const rows=filtered.map(app=>{
     const co=coMap[app.company_id]; const d=calcDual(app); const esc=JSON.stringify(app).replace(/"/g,'&quot;');
     return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name||'—'}</a></td>
@@ -1220,9 +1518,16 @@ function renderAllDual(apps,companies) {
       <td><button class="btn-edit" onclick='showFormDual(null,${esc})'>✏️</button></td>
     </tr>`;
   }).join('');
-  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-    <h1 style="font-size:18px;font-weight:700;color:#111827">👶 両立支援等助成金 — 全件</h1>
-    ${addBtn('showFormDual()','新規登録')}
+  const hidden=apps.length-filtered.length;
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <h1 style="font-size:18px;font-weight:700;color:#111827">👶 両立支援等助成金 — 全件
+      <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
+      ${hidden?`<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>`:''}
+    </h1>
+    <div style="display:flex;align-items:center;gap:10px">
+      ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
+      ${addBtn('showFormDual()','新規登録')}
+    </div>
   </div>
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>分類</th><th>コース</th><th>対象者</th>
@@ -1281,7 +1586,14 @@ async function router() {
     content.innerHTML=renderDashboard(data);
   } catch(err) {
     content.innerHTML=`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:18px;color:#991b1b">
-      <strong>エラー</strong><br><span style="font-size:13px">${err.message}</span>
+      <div style="font-weight:700;margin-bottom:6px">⚠️ データの読み込みに失敗しました</div>
+      <div style="font-size:13px">${err.message}</div>
+      ${err.message.includes('RLS')||err.message.includes('row-level')
+        ?`<div style="margin-top:10px;font-size:12px;background:#fff;border-radius:6px;padding:8px 12px;color:#7f1d1d">
+           Supabase SQL エディターで以下を実行してください:<br>
+           <code style="display:block;margin-top:6px;font-family:monospace;background:#fee2e2;padding:4px 8px;border-radius:4px">
+             ALTER TABLE company_notes DISABLE ROW LEVEL SECURITY;
+           </code></div>`:''}
     </div>`;
   }
 }
