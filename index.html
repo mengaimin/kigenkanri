@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>助成金統合管理システム</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body { font-family: "Hiragino Kaku Gothic ProN","Hiragino Sans",Meiryo,"Yu Gothic",sans-serif; }
+    .nav-tab {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 12px 14px; font-size: 13px; color: #94a3b8;
+      cursor: pointer; border-bottom: 3px solid transparent;
+      white-space: nowrap; text-decoration: none; transition: all 0.15s;
+    }
+    .nav-tab:hover { color: #fff; background: rgba(255,255,255,0.1); }
+    .nav-tab.active { color: #fff; border-bottom-color: #60a5fa; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+    th { background: #f9fafb; font-weight: 500; font-size: 11px; color: #6b7280; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    tr:hover td { background: #fafbfc; }
+    .badge {
+      display: inline-flex; align-items: center; padding: 2px 7px;
+      border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap;
+    }
+    .badge-red    { background: #fee2e2; color: #991b1b; }
+    .badge-orange { background: #ffedd5; color: #9a3412; }
+    .badge-yellow { background: #fef9c3; color: #713f12; }
+    .badge-green  { background: #dcfce7; color: #14532d; }
+    .badge-blue   { background: #dbeafe; color: #1e40af; }
+    .badge-gray   { background: #f3f4f6; color: #4b5563; }
+    .stbadge {
+      display: inline-flex; padding: 2px 7px;
+      border-radius: 4px; font-size: 11px; font-weight: 500; white-space: nowrap;
+    }
+    input[type=text]:focus { outline: 2px solid #60a5fa; outline-offset: -1px; }
+    .card { background: white; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; margin-bottom: 20px; }
+    .card-header { padding: 10px 14px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 14px; }
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+<!-- ===================== NAVIGATION ===================== -->
+<nav class="bg-slate-800 text-white flex items-center overflow-x-auto sticky top-0 z-50 shadow-lg" style="min-height:48px">
+  <span class="px-4 font-bold text-sm border-r border-slate-700 whitespace-nowrap flex-shrink-0 py-3">
+    📋 助成金管理
+  </span>
+  <a class="nav-tab" href="#dashboard">📊 ダッシュボード</a>
+  <a class="nav-tab" href="#companies">🏢 会社検索</a>
+  <a class="nav-tab" href="#career-up">👔 キャリアアップ</a>
+  <a class="nav-tab" href="#biz">🏭 業務改善</a>
+  <a class="nav-tab" href="#work">⏰ 働き方改革</a>
+  <a class="nav-tab" href="#dual">👶 両立支援</a>
+</nav>
+
+<!-- ===================== CONTENT ===================== -->
+<div id="content" class="flex-1 max-w-6xl mx-auto w-full p-5">
+  <div class="text-center py-16 text-gray-400">読み込み中...</div>
+</div>
+
+<script>
+// ================================================================
+//  ★★★  CONFIG  ★★★
+//  Supabase ダッシュボード → Settings → API で確認してここに入力
+// ================================================================
+const SUPABASE_URL      = 'https://zffoaelhfskphgihbsll.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmZm9hZWxoZnNrcGhnaWhic2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxODk2MjMsImV4cCI6MjA5MTc2NTYyM30.VbH19CiSqOgRwS8jLCP9gZjphq8RWj72hKCWMaP4NJ4';
+
+// ================================================================
+//  Supabase クライアント初期化
+// ================================================================
+const { createClient } = window.supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ================================================================
+//  日付ユーティリティ
+// ================================================================
+function parseDate(s) {
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function today0() {
+  const d = new Date(); d.setHours(0,0,0,0); return d;
+}
+
+function daysFromToday(d) {
+  if (!d) return null;
+  const t = d instanceof Date ? new Date(d) : new Date(d);
+  t.setHours(0,0,0,0);
+  return Math.floor((t - today0()) / 86400000);
+}
+
+function addMonths(d, months) {
+  const r = new Date(d);
+  const day = r.getDate();
+  r.setMonth(r.getMonth() + months);
+  if (r.getDate() < day) r.setDate(0); // 月末繰り上げ対応
+  return r;
+}
+
+function addDays(d, days) {
+  const r = new Date(d);
+  r.setDate(r.getDate() + days);
+  return r;
+}
+
+function fmt(d) {
+  if (!d) return '—';
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return '—';
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth()+1).padStart(2,'0');
+  const day = String(dt.getDate()).padStart(2,'0');
+  return `${y}/${m}/${day}`;
+}
+
+// ================================================================
+//  バッジ HTML
+// ================================================================
+function deadlineBadge(days) {
+  if (days === null || days === undefined)
+    return '<span class="badge badge-blue">✅ 完了</span>';
+  if (days < 0)    return `<span class="badge badge-red">🔴 ${Math.abs(days)}日超過</span>`;
+  if (days === 0)  return `<span class="badge badge-red">🔴 本日期限</span>`;
+  if (days <= 7)   return `<span class="badge badge-orange">🟠 あと${days}日</span>`;
+  if (days <= 30)  return `<span class="badge badge-yellow">🟡 あと${days}日</span>`;
+  return `<span class="badge badge-green">🟢 あと${days}日</span>`;
+}
+
+const STATUS_STYLE = {
+  '未申請':               'background:#f3f4f6;color:#4b5563',
+  '申請待ち':             'background:#fef3c7;color:#92400e',
+  '交付申請済':           'background:#fef9c3;color:#713f12',
+  '交付決定済':           'background:#dbeafe;color:#1e40af',
+  '事業実施中':           'background:#cffafe;color:#155e75',
+  '事業完了（報告待）':   'background:#ffedd5;color:#9a3412',
+  '事業実績報告済':       'background:#f3e8ff;color:#6b21a8',
+  '支給申請済':           'background:#e0e7ff;color:#3730a3',
+  '承認済（助成金受領）': 'background:#dcfce7;color:#14532d',
+  '承認済':               'background:#dcfce7;color:#14532d',
+  '申請済':               'background:#e0e7ff;color:#3730a3',
+  '不承認':               'background:#fee2e2;color:#991b1b',
+  '育休中':               'background:#fce7f3;color:#831843',
+  '介護休業中':           'background:#ffe4e6;color:#9f1239',
+  '制度利用中':           'background:#ccfbf1;color:#134e4a',
+  '支給申請待ち':         'background:#fef3c7;color:#92400e',
+};
+
+function stBadge(s) {
+  const style = STATUS_STYLE[s] || 'background:#f3f4f6;color:#4b5563';
+  return `<span class="stbadge" style="${style}">${s||'—'}</span>`;
+}
+
+const TYPE_STYLE = {
+  career_up: 'background:#f3e8ff;color:#5b21b6',
+  biz:       'background:#dbeafe;color:#1e40af',
+  work:      'background:#ccfbf1;color:#0f766e',
+  dual:      'background:#fce7f3;color:#9d174d',
+};
+const TYPE_LABEL = {
+  career_up: 'キャリアアップ',
+  biz:       '業務改善',
+  work:      '働き方改革',
+  dual:      '両立支援',
+};
+
+// ================================================================
+//  期限計算
+// ================================================================
+
+// --- キャリアアップ ---
+function salaryDateAfter(convDate, monthsAfter, payDay) {
+  const threshold = addMonths(convDate, monthsAfter);
+  let d = new Date(threshold.getFullYear(), threshold.getMonth(), payDay);
+  if (d < threshold) {
+    d = new Date(threshold.getFullYear(), threshold.getMonth()+1, payDay);
+  }
+  // 月末調整
+  const lastDay = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+  if (payDay > lastDay) d = new Date(d.getFullYear(), d.getMonth()+1, 0);
+  return d;
+}
+
+function calcCareerUp(app) {
+  const conv = parseDate(app.conversion_date);
+  const pd   = app.salary_payment_day;
+  if (!conv || !pd) return {};
+
+  const fp = salaryDateAfter(conv, 6, pd);     // 1回目 給与支給日（転換後6ヶ月）
+  const fs = addDays(fp, 1);                   // 申請開始日
+  const fd = addDays(addMonths(fs, 2), -1);    // 1回目 申請期限（2ヶ月以内）
+
+  let sp = null, ss = null, sd = null;
+  if (app.is_priority_worker) {
+    sp = salaryDateAfter(conv, 12, pd);        // 2回目 給与支給日（転換後12ヶ月）
+    ss = addDays(sp, 1);
+    sd = addDays(addMonths(ss, 2), -1);        // 2回目 申請期限
+  }
+
+  const isDone1 = app.status_first  === '承認済';
+  const isDone2 = app.status_second === '承認済';
+
+  return {
+    fp, fs, fd,
+    fDays: isDone1 ? null : daysFromToday(fd),
+    sp, ss, sd,
+    sDays: (sd && !isDone2) ? daysFromToday(sd) : null,
+  };
+}
+
+// --- 業務改善 ---
+const BIZ_COMP_LIMIT = new Date(2027, 0, 31);  // 2027/01/31
+const BIZ_SUP_MAX    = new Date(2027, 3, 10);  // 2027/04/10
+
+function calcBiz(app) {
+  const comp = parseDate(app.completion_date_actual);
+  const isDone = ['支給申請済','承認済（助成金受領）'].includes(app.status);
+
+  // 事業完了期限の残日数（未完了なら表示）
+  const compDays = comp ? null : daysFromToday(BIZ_COMP_LIMIT);
+
+  // 支給申請期限 = MIN(完了日+1ヶ月, 2027/04/10)
+  let supLimit = null, supDays = null;
+  if (comp) {
+    const oneM = addMonths(comp, 1);
+    supLimit = oneM < BIZ_SUP_MAX ? oneM : BIZ_SUP_MAX;
+    supDays  = isDone ? null : daysFromToday(supLimit);
+  }
+  return { compLimit: BIZ_COMP_LIMIT, compDays, supLimit, supDays };
+}
+
+// --- 働き方改革 ---
+const WORK_APP_LIMIT  = new Date(2026, 10, 30);  // 2026/11/30
+const WORK_COMP_LIMIT = new Date(2027,  0, 31);  // 2027/01/31
+const WORK_SUP_MAX    = new Date(2027,  1,  5);  // 2027/02/05
+
+function calcWork(app) {
+  const appDate  = parseDate(app.application_date);
+  const compDate = parseDate(app.completion_date);
+  const isDone   = ['支給申請済','承認済'].includes(app.status);
+  const notApp   = ['未申請','交付申請済'].includes(app.status);
+
+  const appDays  = notApp ? daysFromToday(WORK_APP_LIMIT) : null;
+  const decEst   = appDate ? addDays(appDate, 30) : null;
+
+  let supLimit = null, supDays = null;
+  if (compDate) {
+    const td = addDays(compDate, 30);
+    supLimit = td < WORK_SUP_MAX ? td : WORK_SUP_MAX;
+    supDays  = isDone ? null : daysFromToday(supLimit);
+  } else if (appDate) {
+    supLimit = WORK_SUP_MAX;
+    supDays  = isDone ? null : daysFromToday(supLimit);
+  }
+  return { appLimit: WORK_APP_LIMIT, appDays, decEst, compLimit: WORK_COMP_LIMIT, supLimit, supDays };
+}
+
+// --- 両立支援 ---
+// [起算日オフセット月, 起算日オフセット日, 申請期限月, 申請期限日(−1=月末前日)]
+const DUAL_MASTER = {
+  '出生時両立支援（第1種）':          [0, 1, 2, -1],
+  '介護離職防止（休業取得時）':       [0, 1, 2, -1],
+  '介護離職防止（職場復帰時）':       [3, 1, 2, -1],
+  '育児休業等支援（育休取得時）':     [3, 1, 2, -1],
+  '育児休業等支援（職場復帰時）':     [6, 1, 2, -1],
+  '育休中等業務代替（1ヶ月未満）':    [0, 1, 2, -1],
+  '育休中等業務代替（1ヶ月以上）':    [3, 1, 2, -1],
+  '柔軟な働き方選択制度':             [6, 1, 2, -1],
+  '不妊治療両立支援':                 [0, 1, 2, -1],
+};
+
+function calcDual(app) {
+  const m = DUAL_MASTER[app.support_course];
+  if (!m) return {};
+  const [sm, sd, lm, ld] = m;
+
+  // 起算日: date2 優先、なければ date1
+  const base = parseDate(app.date2) || parseDate(app.date1);
+  if (!base) return {};
+
+  const appStart = addDays(addMonths(base, sm), sd);  // 申請可能開始日
+  const deadline = addDays(addMonths(appStart, lm), ld);  // 申請期限
+
+  const isDone = ['支給申請済','承認済'].includes(app.status);
+  return { base, appStart, deadline, days: isDone ? null : daysFromToday(deadline) };
+}
+
+// ================================================================
+//  Supabase データ取得
+// ================================================================
+async function fetchAll() {
+  const [cu, bi, ws, ds, co] = await Promise.all([
+    db.from('career_up_applications')
+      .select('*,company:companies(id,name,size_category)')
+      .order('created_at', { ascending: false }),
+    db.from('business_improvement_applications')
+      .select('*,company:companies(id,name,size_category)')
+      .order('created_at', { ascending: false }),
+    db.from('work_style_applications')
+      .select('*,company:companies(id,name,size_category)')
+      .order('created_at', { ascending: false }),
+    db.from('dual_support_applications')
+      .select('*,company:companies(id,name,size_category)')
+      .order('created_at', { ascending: false }),
+    db.from('companies').select('*').order('name'),
+  ]);
+  if (cu.error) throw new Error(`キャリアアップ取得失敗: ${cu.error.message}`);
+  if (bi.error) throw new Error(`業務改善取得失敗: ${bi.error.message}`);
+  if (ws.error) throw new Error(`働き方改革取得失敗: ${ws.error.message}`);
+  if (ds.error) throw new Error(`両立支援取得失敗: ${ds.error.message}`);
+  if (co.error) throw new Error(`会社取得失敗: ${co.error.message}`);
+  return {
+    careerUp:  cu.data || [],
+    biz:       bi.data || [],
+    work:      ws.data || [],
+    dual:      ds.data || [],
+    companies: co.data || [],
+  };
+}
+
+async function fetchCompanyDetail(id) {
+  const [co, cu, bi, ws, ds] = await Promise.all([
+    db.from('companies').select('*').eq('id', id).single(),
+    db.from('career_up_applications').select('*').eq('company_id', id),
+    db.from('business_improvement_applications').select('*').eq('company_id', id),
+    db.from('work_style_applications').select('*').eq('company_id', id),
+    db.from('dual_support_applications').select('*').eq('company_id', id),
+  ]);
+  return {
+    company:  co.data,
+    careerUp: cu.data || [],
+    biz:      bi.data || [],
+    work:     ws.data || [],
+    dual:     ds.data || [],
+  };
+}
+
+// ================================================================
+//  ダッシュボード用: 全期限アイテムを生成
+// ================================================================
+function buildDeadlineItems(data) {
+  const items = [];
+
+  data.careerUp.forEach(app => {
+    const d  = calcCareerUp(app);
+    const co = app.company?.name || '';
+    const cid= app.company_id;
+    if (d.fd) {
+      items.push({ type:'career_up', companyName:co, companyId:cid,
+        target: app.employee_name, kind:'1回目 申請期限',
+        deadline: d.fd, days: d.fDays, status: app.status_first });
+    }
+    if (d.sd) {
+      items.push({ type:'career_up', companyName:co, companyId:cid,
+        target: app.employee_name, kind:'2回目 申請期限',
+        deadline: d.sd, days: d.sDays, status: app.status_second });
+    }
+  });
+
+  data.biz.forEach(app => {
+    const d  = calcBiz(app);
+    const co = app.company?.name || '';
+    const cid= app.company_id;
+    if (d.compDays !== null) {
+      items.push({ type:'biz', companyName:co, companyId:cid,
+        target: null, kind:'事業完了期限', deadline: d.compLimit, days: d.compDays, status: app.status });
+    }
+    if (d.supLimit) {
+      items.push({ type:'biz', companyName:co, companyId:cid,
+        target: null, kind:'支給申請期限', deadline: d.supLimit, days: d.supDays, status: app.status });
+    }
+  });
+
+  data.work.forEach(app => {
+    const d  = calcWork(app);
+    const co = app.company?.name || '';
+    const cid= app.company_id;
+    if (d.appDays !== null) {
+      items.push({ type:'work', companyName:co, companyId:cid,
+        target: null, kind:'交付申請期限', deadline: d.appLimit, days: d.appDays, status: app.status });
+    }
+    if (d.supLimit) {
+      items.push({ type:'work', companyName:co, companyId:cid,
+        target: null, kind:'支給申請期限', deadline: d.supLimit, days: d.supDays, status: app.status });
+    }
+  });
+
+  data.dual.forEach(app => {
+    const d  = calcDual(app);
+    const co = app.company?.name || '';
+    const cid= app.company_id;
+    if (d.deadline && d.days !== undefined) {
+      items.push({ type:'dual', companyName:co, companyId:cid,
+        target: app.employee_name,
+        kind: `支給申請期限 (${app.support_course})`,
+        deadline: d.deadline, days: d.days, status: app.status });
+    }
+  });
+
+  // 残日数でソート（期限切れ→急ぎ→余裕→完了）
+  return items.sort((a, b) => {
+    const da = a.days ?? 99999;
+    const db_ = b.days ?? 99999;
+    return da - db_;
+  });
+}
+
+// ================================================================
+//  ページレンダラー
+// ================================================================
+
+// --- ダッシュボード ---
+function renderDashboard(data) {
+  const items   = buildDeadlineItems(data);
+  const overdue = items.filter(i => i.days !== null && i.days < 0).length;
+  const urgent  = items.filter(i => i.days !== null && i.days >= 0 && i.days <= 7).length;
+  const soon    = items.filter(i => i.days !== null && i.days > 7 && i.days <= 30).length;
+  const ok      = items.filter(i => i.days === null || i.days > 30).length;
+
+  const todayStr = new Date().toLocaleDateString('ja-JP',
+    { year:'numeric', month:'long', day:'numeric', weekday:'short' });
+
+  const summaryCards = [
+    { label:'期限切れ',  count:overdue, bg:'#fee2e2', border:'#fca5a5', text:'#991b1b', em:'🔴' },
+    { label:'残7日以内', count:urgent,  bg:'#ffedd5', border:'#fdba74', text:'#9a3412', em:'🟠' },
+    { label:'残30日以内',count:soon,    bg:'#fef9c3', border:'#fde047', text:'#713f12', em:'🟡' },
+    { label:'余裕あり',  count:ok,      bg:'#dcfce7', border:'#86efac', text:'#14532d', em:'🟢' },
+  ].map(c => `
+    <div style="background:${c.bg};border:1px solid ${c.border};color:${c.text};border-radius:12px;padding:14px 16px">
+      <div style="font-size:12px;font-weight:500;margin-bottom:4px">${c.em} ${c.label}</div>
+      <div style="font-size:28px;font-weight:700">${c.count}</div>
+      <div style="font-size:11px;opacity:0.7">件</div>
+    </div>
+  `).join('');
+
+  const tableRows = items.map(item => {
+    const rowBg = item.days === null    ? '' :
+      item.days < 0    ? 'background:#fff5f5' :
+      item.days <= 7   ? 'background:#fff8f0' :
+      item.days <= 30  ? 'background:#fefce8' : '';
+    return `
+      <tr style="${rowBg}">
+        <td><span class="stbadge" style="${TYPE_STYLE[item.type]}">${TYPE_LABEL[item.type]}</span></td>
+        <td><a href="#company/${item.companyId}">${item.companyName}</a></td>
+        <td style="color:#6b7280">${item.target || '—'}</td>
+        <td style="color:#6b7280;font-size:12px">${item.kind}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(item.deadline)}</td>
+        <td>${deadlineBadge(item.days)}</td>
+        <td>${stBadge(item.status)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px">
+      <h1 style="font-size:18px;font-weight:700;color:#111827">📊 ダッシュボード</h1>
+      <span style="font-size:12px;color:#9ca3af">${todayStr}</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+      ${summaryCards}
+    </div>
+
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span>⚠️ 要対応期限一覧（全助成金）</span>
+        <span style="font-size:12px;color:#6b7280">${items.length} 件</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>助成金</th><th>会社名</th><th>対象者</th>
+            <th>期限種別</th><th>期限日</th><th>残日数</th><th>申請状況</th>
+          </tr></thead>
+          <tbody>
+            ${tableRows || '<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// --- 会社一覧 ---
+function renderCompanies(data, query) {
+  let companies = data.companies;
+  if (query) {
+    companies = companies.filter(c => c.name.includes(query));
+  }
+
+  // 会社別件数カウント
+  const cnt = {};
+  const inc = (key, id) => { if (!cnt[id]) cnt[id]={cu:0,bi:0,ws:0,ds:0}; cnt[id][key]++; };
+  data.careerUp.forEach(a => inc('cu', a.company_id));
+  data.biz.forEach(a    => inc('bi', a.company_id));
+  data.work.forEach(a   => inc('ws', a.company_id));
+  data.dual.forEach(a   => inc('ds', a.company_id));
+
+  const rows = companies.map(co => {
+    const c = cnt[co.id] || {cu:0,bi:0,ws:0,ds:0};
+    return `
+      <tr>
+        <td><a href="#company/${co.id}">${co.name}</a></td>
+        <td style="font-size:12px;color:#6b7280">${co.size_category||'—'}</td>
+        <td style="text-align:center">${c.cu ? `<span style="color:#5b21b6;font-weight:600">${c.cu}件</span>` : '<span style="color:#d1d5db">—</span>'}</td>
+        <td style="text-align:center">${c.bi ? `<span style="color:#1e40af;font-weight:600">${c.bi}件</span>` : '<span style="color:#d1d5db">—</span>'}</td>
+        <td style="text-align:center">${c.ws ? `<span style="color:#0f766e;font-weight:600">${c.ws}件</span>` : '<span style="color:#d1d5db">—</span>'}</td>
+        <td style="text-align:center">${c.ds ? `<span style="color:#9d174d;font-weight:600">${c.ds}件</span>` : '<span style="color:#d1d5db">—</span>'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <h1 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:14px">🏢 会社一覧・検索</h1>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input id="search-input" type="text" placeholder="会社名で絞り込み..." value="${query}"
+        style="flex:1;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px"
+        onkeydown="if(event.key==='Enter')doSearch()">
+      <button onclick="doSearch()"
+        style="padding:8px 16px;background:#2563eb;color:white;border-radius:8px;font-size:13px;cursor:pointer;border:none">
+        検索
+      </button>
+      ${query ? `<button onclick="clearSearch()"
+        style="padding:8px 12px;background:#f3f4f6;color:#374151;border-radius:8px;font-size:13px;cursor:pointer;border:none">
+        クリア</button>` : ''}
+    </div>
+    ${query ? `<p style="font-size:13px;color:#6b7280;margin-bottom:10px">「${query}」の検索結果: ${companies.length} 件</p>` : ''}
+    <div class="card">
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>会社名</th><th>規模</th>
+            <th style="text-align:center;color:#5b21b6">キャリアアップ</th>
+            <th style="text-align:center;color:#1e40af">業務改善</th>
+            <th style="text-align:center;color:#0f766e">働き方改革</th>
+            <th style="text-align:center;color:#9d174d">両立支援</th>
+          </tr></thead>
+          <tbody>
+            ${rows || '<tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:24px">該当なし</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// --- 会社詳細 ---
+function renderCompanyDetail(det) {
+  const { company, careerUp, biz, work, dual } = det;
+  if (!company) return '<div style="text-align:center;padding:40px;color:#9ca3af">会社が見つかりません</div>';
+  const total = careerUp.length + biz.length + work.length + dual.length;
+
+  const secs = [
+    careerUp.length ? renderCuSection(careerUp)   : '',
+    biz.length      ? renderBizSection(biz)        : '',
+    work.length     ? renderWorkSection(work)      : '',
+    dual.length     ? renderDualSection(dual)      : '',
+  ].join('');
+
+  return `
+    <div style="font-size:12px;color:#9ca3af;margin-bottom:10px">
+      <a href="#companies" style="color:#6b7280">会社一覧</a>
+      <span style="margin:0 6px">/</span>
+      <span style="color:#374151">${company.name}</span>
+    </div>
+
+    <div class="card" style="padding:14px;margin-bottom:20px">
+      <h1 style="font-size:18px;font-weight:700;color:#111827">${company.name}</h1>
+      <div style="font-size:13px;color:#6b7280;margin-top:4px;display:flex;gap:16px">
+        ${company.size_category ? `<span>規模: ${company.size_category}</span>` : ''}
+        ${company.industry ? `<span>業種: ${company.industry}</span>` : ''}
+        <span>申請合計: ${total} 件</span>
+      </div>
+      ${company.notes ? `<div style="font-size:12px;color:#6b7280;margin-top:6px;background:#f9fafb;padding:6px 10px;border-radius:6px">📝 ${company.notes}</div>` : ''}
+    </div>
+
+    ${secs || '<div style="text-align:center;padding:40px;color:#9ca3af">この会社の助成金申請データがありません</div>'}
+  `;
+}
+
+function renderCuSection(apps) {
+  const rows = apps.map(app => {
+    const d = calcCareerUp(app);
+    return `
+      <tr>
+        <td style="font-weight:500">${app.employee_name}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.conversion_date))}</td>
+        <td style="text-align:center">${app.is_priority_worker ? '✓' : '—'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.fd)}</td>
+        <td>${deadlineBadge(d.fDays)}</td>
+        <td>${stBadge(app.status_first)}</td>
+        <td style="font-family:monospace;font-size:12px">${app.is_priority_worker ? fmt(d.sd) : '—'}</td>
+        <td>${app.is_priority_worker ? deadlineBadge(d.sDays) : '—'}</td>
+        <td>${app.is_priority_worker ? stBadge(app.status_second) : '—'}</td>
+        <td style="font-size:11px;color:#9ca3af">${app.notes||''}</td>
+      </tr>
+    `;
+  }).join('');
+  return section('purple','👔 キャリアアップ助成金（正社員化コース）',`
+    <table>
+      <thead><tr>
+        <th>従業員名</th><th>転換日</th><th>重点</th>
+        <th>1回目 申請期限</th><th>1回目 残日数</th><th>1回目 状況</th>
+        <th>2回目 申請期限</th><th>2回目 残日数</th><th>2回目 状況</th><th>備考</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `);
+}
+
+function renderBizSection(apps) {
+  const rows = apps.map(app => {
+    const d = calcBiz(app);
+    return `
+      <tr>
+        <td>${app.wage_course||'—'}</td>
+        <td>${app.worker_count||'—'}</td>
+        <td style="font-size:12px;color:#4b5563;max-width:160px;overflow:hidden;text-overflow:ellipsis">${app.equipment_description||'—'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.compLimit)}</td>
+        <td>${deadlineBadge(d.compDays)}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
+        <td>${deadlineBadge(d.supDays)}</td>
+        <td>${stBadge(app.status)}</td>
+        <td style="font-size:11px;color:#9ca3af">${app.notes||''}</td>
+      </tr>
+    `;
+  }).join('');
+  return section('blue','🏭 業務改善助成金（令和8年度: 50/70/90円コース）',`
+    <table>
+      <thead><tr>
+        <th>コース</th><th>人数</th><th>設備投資</th>
+        <th>事業完了期限</th><th>完了残日数</th>
+        <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th>備考</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `);
+}
+
+function renderWorkSection(apps) {
+  const rows = apps.map(app => {
+    const d = calcWork(app);
+    return `
+      <tr>
+        <td style="font-size:12px">${app.goal_type||'—'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.application_date))}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.appLimit)}</td>
+        <td>${d.appDays !== null ? deadlineBadge(d.appDays) : '<span class="badge badge-gray">済</span>'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
+        <td>${deadlineBadge(d.supDays)}</td>
+        <td>${stBadge(app.status)}</td>
+        <td style="font-size:11px;color:#9ca3af">${app.notes||''}</td>
+      </tr>
+    `;
+  }).join('');
+  return section('teal','⏰ 働き方改革推進支援助成金（令和8年度）',`
+    <table>
+      <thead><tr>
+        <th>成果目標</th><th>交付申請日</th><th>申請期限</th><th>申請残日数</th>
+        <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th>備考</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `);
+}
+
+function renderDualSection(apps) {
+  const rows = apps.map(app => {
+    const d = calcDual(app);
+    return `
+      <tr>
+        <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
+        <td style="font-size:12px;white-space:nowrap">${app.support_course}</td>
+        <td style="font-weight:500">${app.employee_name}</td>
+        <td style="font-size:12px;color:#6b7280">${app.person_in_charge||'—'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.base)}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.appStart)}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
+        <td>${deadlineBadge(d.days)}</td>
+        <td>${stBadge(app.status)}</td>
+        <td style="font-size:11px;color:#9ca3af">${app.notes||''}</td>
+      </tr>
+    `;
+  }).join('');
+  return section('pink','👶 両立支援等助成金（6コース）',`
+    <table>
+      <thead><tr>
+        <th>分類</th><th>コース</th><th>対象者</th><th>担当</th>
+        <th>起算日</th><th>申請可能日</th><th>申請期限</th><th>残日数</th><th>状況</th><th>備考</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `);
+}
+
+function section(color, title, inner) {
+  const C = {
+    purple: { bg:'#f5f3ff', border:'#ddd6fe', text:'#5b21b6' },
+    blue:   { bg:'#eff6ff', border:'#bfdbfe', text:'#1e40af' },
+    teal:   { bg:'#f0fdfa', border:'#99f6e4', text:'#0f766e' },
+    pink:   { bg:'#fdf2f8', border:'#fbcfe8', text:'#9d174d' },
+  }[color];
+  return `
+    <div class="card">
+      <div style="padding:9px 14px;border-bottom:1px solid ${C.border};background:${C.bg};color:${C.text};font-weight:600;font-size:13px">
+        ${title}
+      </div>
+      <div style="overflow-x:auto">${inner}</div>
+    </div>
+  `;
+}
+
+// --- 助成金別 全件ページ ---
+function renderAllCareerUp(apps, companies) {
+  const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
+  const rows  = apps.map(app => {
+    const co = coMap[app.company_id];
+    const d  = calcCareerUp(app);
+    return `
+      <tr>
+        <td><a href="#company/${app.company_id}">${co?.name||'—'}</a></td>
+        <td style="font-weight:500">${app.employee_name}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.conversion_date))}</td>
+        <td style="text-align:center">${app.is_priority_worker ? '✓' : '—'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.fd)}</td>
+        <td>${deadlineBadge(d.fDays)}</td>
+        <td>${stBadge(app.status_first)}</td>
+        <td style="font-family:monospace;font-size:12px">${app.is_priority_worker ? fmt(d.sd) : '—'}</td>
+        <td>${app.is_priority_worker ? deadlineBadge(d.sDays) : '—'}</td>
+        <td>${app.is_priority_worker ? stBadge(app.status_second) : '—'}</td>
+      </tr>
+    `;
+  }).join('');
+  return `
+    <h1 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:16px">👔 キャリアアップ助成金 — 全件</h1>
+    <div class="card">
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>会社名</th><th>従業員名</th><th>転換日</th><th>重点</th>
+            <th>1回目 申請期限</th><th>1回目 残日数</th><th>1回目 状況</th>
+            <th>2回目 申請期限</th><th>2回目 残日数</th><th>2回目 状況</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderAllBiz(apps, companies) {
+  const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
+  const rows  = apps.map(app => {
+    const co = coMap[app.company_id];
+    const d  = calcBiz(app);
+    return `
+      <tr>
+        <td><a href="#company/${app.company_id}">${co?.name||'—'}</a></td>
+        <td>${app.wage_course||'—'}</td>
+        <td>${app.worker_count||'—'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.compLimit)}</td>
+        <td>${deadlineBadge(d.compDays)}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
+        <td>${deadlineBadge(d.supDays)}</td>
+        <td>${stBadge(app.status)}</td>
+        <td style="font-size:11px;color:#9ca3af">${app.notes||''}</td>
+      </tr>
+    `;
+  }).join('');
+  return `
+    <h1 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:16px">🏭 業務改善助成金 — 全件</h1>
+    <div class="card">
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>会社名</th><th>コース</th><th>人数</th>
+            <th>事業完了期限</th><th>完了残日数</th>
+            <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th>備考</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderAllWork(apps, companies) {
+  const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
+  const rows  = apps.map(app => {
+    const co = coMap[app.company_id];
+    const d  = calcWork(app);
+    return `
+      <tr>
+        <td><a href="#company/${app.company_id}">${co?.name||'—'}</a></td>
+        <td style="font-size:12px">${app.goal_type||'—'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.application_date))}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.appLimit)}</td>
+        <td>${d.appDays !== null ? deadlineBadge(d.appDays) : '<span class="badge badge-gray">済</span>'}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
+        <td>${deadlineBadge(d.supDays)}</td>
+        <td>${stBadge(app.status)}</td>
+        <td style="font-size:11px;color:#9ca3af">${app.notes||''}</td>
+      </tr>
+    `;
+  }).join('');
+  return `
+    <h1 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:16px">⏰ 働き方改革推進支援助成金 — 全件</h1>
+    <div class="card">
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>会社名</th><th>成果目標</th><th>交付申請日</th>
+            <th>申請期限</th><th>申請残日数</th>
+            <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th>備考</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderAllDual(apps, companies) {
+  const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
+  const rows  = apps.map(app => {
+    const co = coMap[app.company_id];
+    const d  = calcDual(app);
+    return `
+      <tr>
+        <td><a href="#company/${app.company_id}">${co?.name||'—'}</a></td>
+        <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
+        <td style="font-size:12px;white-space:nowrap">${app.support_course}</td>
+        <td style="font-weight:500">${app.employee_name}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.base)}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.appStart)}</td>
+        <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
+        <td>${deadlineBadge(d.days)}</td>
+        <td>${stBadge(app.status)}</td>
+      </tr>
+    `;
+  }).join('');
+  return `
+    <h1 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:16px">👶 両立支援等助成金 — 全件</h1>
+    <div class="card">
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>会社名</th><th>分類</th><th>コース</th><th>対象者</th>
+            <th>起算日</th><th>申請可能日</th><th>申請期限</th><th>残日数</th><th>状況</th>
+          </tr></thead>
+          <tbody>${rows||'<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// ================================================================
+//  イベントハンドラー
+// ================================================================
+function doSearch() {
+  const q = (document.getElementById('search-input')?.value||'').trim();
+  location.hash = q ? `#companies?q=${encodeURIComponent(q)}` : '#companies';
+}
+
+function clearSearch() {
+  location.hash = '#companies';
+}
+
+// ================================================================
+//  グローバルデータキャッシュ（ページ遷移間で保持）
+// ================================================================
+let cache = null;
+
+async function getData() {
+  if (!cache) cache = await fetchAll();
+  return cache;
+}
+
+// ================================================================
+//  ルーター
+// ================================================================
+async function router() {
+  const hash    = location.hash || '#dashboard';
+  const content = document.getElementById('content');
+
+  // アクティブタブ更新
+  document.querySelectorAll('.nav-tab').forEach(tab => {
+    const href = tab.getAttribute('href');
+    tab.classList.toggle('active',
+      (hash === '#dashboard' && href === '#dashboard') ||
+      (hash.startsWith('#companies') && href === '#companies') ||
+      (hash === '#career-up' && href === '#career-up') ||
+      (hash === '#biz'       && href === '#biz') ||
+      (hash === '#work'      && href === '#work') ||
+      (hash === '#dual'      && href === '#dual') ||
+      (hash.startsWith('#company/') && href === '#companies')
+    );
+  });
+
+  content.innerHTML = '<div style="text-align:center;padding:60px;color:#9ca3af">読み込み中...</div>';
+
+  try {
+    // Supabase 未設定チェック
+    if (SUPABASE_URL.includes('xxxxxxx')) {
+      content.innerHTML = `
+        <div style="max-width:560px;margin:60px auto;background:white;border:1px solid #e5e7eb;border-radius:12px;padding:28px">
+          <h2 style="font-size:16px;font-weight:700;color:#dc2626;margin-bottom:12px">⚙️ Supabase 接続設定が必要です</h2>
+          <p style="font-size:13px;color:#374151;margin-bottom:16px">
+            <code>index.html</code> 冒頭の CONFIG セクションを編集して、Supabase URL と Anon Key を入力してください。
+          </p>
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;font-size:12px;font-family:monospace">
+            const SUPABASE_URL      = '<b style="color:#2563eb">https://あなたのプロジェクト.supabase.co</b>';<br>
+            const SUPABASE_ANON_KEY = '<b style="color:#2563eb">eyJhbGci...</b>';
+          </div>
+          <p style="font-size:12px;color:#6b7280;margin-top:12px">
+            Supabase ダッシュボード → Settings → API → Project URL / anon public key
+          </p>
+        </div>
+      `;
+      return;
+    }
+
+    // === 会社詳細 ===
+    if (hash.startsWith('#company/')) {
+      const id  = decodeURIComponent(hash.slice('#company/'.length));
+      const det = await fetchCompanyDetail(id);
+      content.innerHTML = renderCompanyDetail(det);
+      return;
+    }
+
+    // === 共通データ ===
+    const data = await getData();
+
+    // === 会社検索 ===
+    if (hash.startsWith('#companies')) {
+      const qs = hash.includes('?') ? hash.split('?')[1] : '';
+      const q  = qs ? decodeURIComponent(new URLSearchParams(qs).get('q')||'') : '';
+      content.innerHTML = renderCompanies(data, q);
+      return;
+    }
+
+    // === 助成金別全件 ===
+    if (hash === '#career-up') { content.innerHTML = renderAllCareerUp(data.careerUp, data.companies); return; }
+    if (hash === '#biz')       { content.innerHTML = renderAllBiz(data.biz, data.companies);           return; }
+    if (hash === '#work')      { content.innerHTML = renderAllWork(data.work, data.companies);         return; }
+    if (hash === '#dual')      { content.innerHTML = renderAllDual(data.dual, data.companies);         return; }
+
+    // === ダッシュボード（デフォルト） ===
+    content.innerHTML = renderDashboard(data);
+
+  } catch (err) {
+    content.innerHTML = `
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:18px;color:#991b1b">
+        <strong>エラーが発生しました</strong><br>
+        <span style="font-size:13px">${err.message}</span><br>
+        <small style="color:#b91c1c">Supabase の URL / キー、またはネットワーク接続を確認してください。</small>
+      </div>
+    `;
+  }
+}
+
+// ================================================================
+//  初期化
+// ================================================================
+window.addEventListener('hashchange', router);
+if (!location.hash || location.hash === '#') location.hash = '#dashboard';
+router();
+</script>
+</body>
+</html>
