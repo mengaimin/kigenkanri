@@ -643,6 +643,25 @@
       text-decoration: none;
     }
 
+    tr[data-app-id] {
+      transition: background 0.25s;
+    }
+
+    .audit-row-highlight,
+    .tl-item.audit-row-highlight .tl-body {
+      background: #fef3c7 !important;
+      outline: 2px solid #f59e0b;
+      border-radius: 6px;
+    }
+
+    .audit-log-row {
+      cursor: pointer;
+    }
+
+    .audit-log-row:hover td {
+      background: #f8fafc;
+    }
+
     .co-link::before {
       content: '🏢';
       font-size: 11px;
@@ -902,9 +921,8 @@
         : '';
       openModal('👤 ログイン', `
     <form onsubmit="submitOperatorLogin(event)">
-      ${getOperator() ? `<p style="font-size:12px;color:#374151;margin:0 0 12px">ログイン中: <strong>${getOperator()}</strong>${isAdmin() ? ' <span style="color:#7c3aed">(管理者)</span>' : ''}</p>` : ''}
-      ${fRow('ログインID', fInput('login_id', '', 'text', 'autocomplete="username"'), '', !getOperator())}
-      ${fRow('パスワード', fInput('password', '', 'password', 'autocomplete="current-password"'), getOperator() ? '別アカウントでログインする場合' : '初回: admin / Admin1234', !getOperator())}
+      ${fRow('ログインID', fInput('login_id', '', 'text', 'autocomplete="username"'), '', true)}
+      ${fRow('パスワード', fInput('password', '', 'password', 'autocomplete="current-password"'), getOperator() ? '別アカウントでログインする場合' : '', true)}
       <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
         ${getOperator() ? `<button type="button" onclick="logoutOperator()" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">ログアウト</button>` : ''}
         ${pwBtn}
@@ -1269,15 +1287,21 @@
     </table>${more}</div>
   </div>`;
     }
-    function renderAuditSection(logs) {
+    function renderAuditSection(logs, cid) {
       if (!logs?.length) return '';
-      const rows = logs.slice(0, 30).map(l => `<tr>
+      const rows = logs.slice(0, 30).map(l => {
+        const clickable = isAuditLogNavigable(l);
+        const cls = clickable ? ' class="audit-log-row"' : '';
+        const click = clickable ? ` onclick="navigateToAuditLog('${l.table_name}','${l.record_id || ''}','${cid}')" title="該当案件へ移動"` : '';
+        return `<tr${cls}${click}>
     <td style="font-family:monospace;font-size:11px;white-space:nowrap">${new Date(l.created_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
     <td style="font-size:12px">${l.changed_by || '—'}</td>
     <td style="font-size:12px">${l.summary}</td>
-  </tr>`).join('');
+  </tr>`;
+      }).join('');
       return `<div class="card" style="margin-top:16px">
     <div class="card-header" style="font-size:13px;font-weight:600">📝 変更履歴（直近30件）</div>
+    <div style="padding:0 14px 10px;font-size:11px;color:#9ca3af;border-bottom:1px solid #f3f4f6">行をクリックすると「申請状況」タブの該当案件へ移動し、行がハイライト表示されます</div>
     <div style="overflow-x:auto"><table style="width:100%;font-size:13px">
       <thead><tr style="color:#6b7280;font-size:11px"><th>日時</th><th>担当</th><th>内容</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -1285,11 +1309,101 @@
   </div>`;
     }
 
+    const AUDIT_TABLE_SECTION = {
+      career_up_applications: 'career_up',
+      business_improvement_applications: 'biz',
+      work_style_applications: 'work',
+      dual_support_applications: 'dual',
+      reskilling_applications: 'reskill',
+      over65_applications: 'over65',
+    };
+    function isAuditLogNavigable(log) {
+      return !!(AUDIT_TABLE_SECTION[log.table_name] ||
+        ['company_notes', 'companies', 'document_checklists'].includes(log.table_name));
+    }
+    async function navigateToAuditLog(tableName, recordId, cid) {
+      if (tableName === 'program_deadlines') { location.hash = '#dashboard'; return; }
+      if (tableName === 'company_notes') {
+        scrollToCompanyNote(cid, recordId || null);
+        return;
+      }
+      if (tableName === 'companies') {
+        switchDetailTab('status', cid);
+        setTimeout(() => document.getElementById('co-section-company')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+        return;
+      }
+      let section = AUDIT_TABLE_SECTION[tableName];
+      let appId = recordId || null;
+      if (tableName === 'document_checklists' && recordId) {
+        try {
+          const { data } = await db.from('document_checklists').select('subsidy_type, application_id').eq('id', recordId).maybeSingle();
+          if (data) { section = data.subsidy_type; appId = data.application_id; }
+        } catch (_) { /* ignore */ }
+      }
+      if (section) scrollToCompanyRecord(cid, section, appId);
+      else { switchDetailTab('status', cid); }
+    }
+    function highlightAppRow(recordId) {
+      document.querySelectorAll('.audit-row-highlight').forEach(el => el.classList.remove('audit-row-highlight'));
+      if (!recordId) return;
+      const row = document.querySelector(`tr[data-app-id="${recordId}"]`);
+      if (!row) return;
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.classList.add('audit-row-highlight');
+      setTimeout(() => row.classList.remove('audit-row-highlight'), 2500);
+    }
+    function scrollToCompanyRecord(cid, type, recordId) {
+      switchDetailTab('status', cid);
+      const scrollEl = document.querySelector('.company-detail-page .company-detail-scroll');
+      setTimeout(() => {
+        if (scrollEl) scrollEl.scrollTop = 0;
+        document.getElementById(`co-section-${type}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (recordId) {
+          setTimeout(() => highlightAppRow(recordId), 350);
+        }
+      }, 80);
+    }
+    function scrollToCompanyNote(cid, noteId) {
+      switchDetailTab('history', cid);
+      setTimeout(() => {
+        document.querySelectorAll('.audit-row-highlight').forEach(el => el.classList.remove('audit-row-highlight'));
+        const el = noteId ? document.getElementById(`co-note-${noteId}`) : document.getElementById('tab-history');
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (noteId && el) {
+          el.classList.add('audit-row-highlight');
+          setTimeout(() => el.classList.remove('audit-row-highlight'), 2500);
+        }
+      }, 80);
+    }
+
     // ================================================================
     //  日付ユーティリティ
     // ================================================================
     function parseDate(s) { if (!s) return null; const d = new Date(s); return isNaN(d.getTime()) ? null : d; }
     function today0() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+    function todayJST() {
+      const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('-').map(Number);
+      return new Date(y, m - 1, d);
+    }
+    /** 今日の翌日〜期限日までの営業日数（土日除外） */
+    function businessDaysUntil(deadline, today) {
+      if (!deadline) return null;
+      const t = new Date(today); t.setHours(0, 0, 0, 0);
+      const e = new Date(deadline); e.setHours(0, 0, 0, 0);
+      if (e <= t) return null;
+      let count = 0;
+      const d = new Date(t);
+      d.setDate(d.getDate() + 1);
+      while (d <= e) {
+        if (d.getDay() !== 0 && d.getDay() !== 6) count++;
+        d.setDate(d.getDate() + 1);
+      }
+      return count;
+    }
+    function toDateKey(d) {
+      const dt = d instanceof Date ? d : new Date(d);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    }
     function daysFromToday(d) { if (!d) return null; const t = d instanceof Date ? new Date(d) : new Date(d); t.setHours(0, 0, 0, 0); return Math.floor((t - today0()) / 86400000); }
     function addMonths(d, m) { const r = new Date(d); const day = r.getDate(); r.setMonth(r.getMonth() + m); if (r.getDate() < day) r.setDate(0); return r; }
     function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
@@ -1563,6 +1677,202 @@
       if (!canEdit()) return '';
       return `<button type="button" class="add-only" onclick="showFormDeadlines()" style="background:#2563eb;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:500">⚙️ 年度期限設定</button>`;
     }
+    function renderSlackSettingsBtn() {
+      if (!isAdmin()) return '';
+      return `<button type="button" class="add-only" onclick="showFormSlackSettings()" style="background:#4f46e5;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:500">💬 Slack通知</button>`;
+    }
+    function defaultAppBaseUrl() {
+      return `${location.origin}${location.pathname}`.replace(/\/$/, '') || location.href.split('#')[0];
+    }
+    async function showFormSlackSettings() {
+      if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
+      openModal('💬 Slack 期限通知設定', `
+    <p style="font-size:12px;color:#6b7280;margin:0 0 14px;line-height:1.6">
+      案件の期限が<strong>残りN営業日以内</strong>（土日除く）になったタイミングで Slack に通知します（1案件1期限につき1回）。画面の「残日数」は暦日です。<br>
+      <span style="color:#9ca3af">毎日 JST 9:00 に自動で期限チェック・Slack 通知します（同一案件は1回のみ）。手動送信は通常不要です。</span>
+    </p>
+    <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #e5e7eb">
+      ${fRow('管理者パスワード', fInput('slack_admin_password', cachedStaffAdminPw, 'password', 'id="slack-admin-pw" autocomplete="current-password"'), '設定の読み込み・保存に必要', true)}
+      <button type="button" onclick="loadSlackSettingsForm()" style="background:#f3f4f6;border:none;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer">🔄 設定を読み込む</button>
+    </div>
+    <form id="slack-settings-form" onsubmit="saveSlackSettings(event)">
+      <div id="slack-settings-fields">
+        <div style="color:#9ca3af;font-size:12px;padding:8px 0">管理者パスワードを入力して「設定を読み込む」を押してください</div>
+      </div>
+    </form>
+    <div style="text-align:right;margin-top:12px">
+      <button type="button" onclick="closeModal()" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer">閉じる</button>
+    </div>`, { wide: true });
+      if (cachedStaffAdminPw) loadSlackSettingsForm();
+    }
+    function getSlackAdminPassword() {
+      const v = document.getElementById('slack-admin-pw')?.value || '';
+      if (v) cachedStaffAdminPw = v;
+      return v || cachedStaffAdminPw;
+    }
+    async function loadSlackSettingsForm() {
+      const pw = getSlackAdminPassword();
+      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
+      const { data, error } = await db.rpc('staff_get_slack_settings', {
+        p_admin_login_id: getOperatorLoginId(), p_admin_password: pw,
+      });
+      if (error) { toast(errMsg(error), 'error'); return; }
+      const s = data?.[0] || {};
+      const webhookHint = s.webhook_url_masked ? `（登録済: ${s.webhook_url_masked}）` : '';
+      const botHint = s.bot_token_masked ? `（登録済: ${s.bot_token_masked}）` : '';
+      const cronHint = s.last_cron_run_at
+        ? `最終自動実行: ${fmtDateTime(s.last_cron_run_at)}`
+        : '最終自動実行: 未実行（SQL パッチ実行後、翌日 JST 9:00 から開始）';
+      document.getElementById('slack-settings-fields').innerHTML = `
+      ${fCheck('slack_enabled', s.enabled, 'Slack 通知を有効にする')}
+      ${fCheck('slack_cron_enabled', s.cron_enabled !== false, '毎日自動通知（JST 9:00）を有効にする')}
+      <p style="font-size:12px;color:#6b7280;margin:8px 0 14px">${cronHint}</p>
+      <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#065f46;line-height:1.7">
+        <strong>✅ 非公開チャンネル向け（おすすめ）</strong><br>
+        Webhook の一覧にチャンネルが出ない場合は、下の <strong>Bot トークン + チャンネル ID</strong> を使ってください（Webhook は空欄でOK）。
+        <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Bot 方式の設定手順</summary>
+          <ol style="margin:8px 0 0 18px;padding:0">
+            <li><a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> → アプリ → <strong>OAuth &amp; Permissions</strong></li>
+            <li>Bot Token Scopes に <code>chat:write</code> を追加 → ページ上部で <strong>Install to Workspace</strong>（再インストール）</li>
+            <li><strong>Bot User OAuth Token</strong>（<code>xoxb-...</code>）をコピー → 下の Bot トークン欄へ<br>
+              <span style="color:#b45309">⚠️ 上の「User OAuth Token（xoxp-）」は使わないでください</span></li>
+            <li>トークンを貼ったら <strong>📡 接続テスト送信</strong>（保存前でも可）→ OK なら <strong>保存</strong></li>
+            <li>通知チャンネルで <code>/invite @アプリ名</code> → チャンネル ID（<code>C...</code>）を入力</li>
+          </ol>
+        </details>
+      </div>
+      ${fRow('Bot User OAuth Token', fInput('slack_bot_token', '', 'password', 'placeholder="xoxb-..." autocomplete="off"'), botHint ? `${botHint} — 変更する場合のみ再入力` : '必ず xoxb- で始まる Bot User OAuth Token（User Token xoxp- 不可）')}
+      ${fRow('チャンネル ID', fInput('slack_channel_id', s.channel_id || '', 'text', 'placeholder="C0123456789"'), '通知先チャンネルの ID（#名前ではなく C で始まる ID）')}
+      <details style="margin-bottom:12px;font-size:12px;color:#6b7280"><summary style="cursor:pointer">Incoming Webhook 方式（公開チャンネル向け・任意）</summary>
+        <div style="margin-top:8px;line-height:1.7;padding:8px;background:#f9fafb;border-radius:6px">
+          Webhook 作成時に選んだチャンネルへ投稿されます。非公開チャンネルは一覧に出ないことがあります。
+          ${fRow('Incoming Webhook URL', fInput('slack_webhook_url', '', 'url', 'placeholder="https://hooks.slack.com/services/..." autocomplete="off"'), webhookHint || 'Bot 方式を使う場合は空欄でOK')}
+        </div>
+      </details>
+      ${fRow('システムURL', fInput('slack_app_base_url', s.app_base_url || defaultAppBaseUrl(), 'url'), '通知リンクのベース（例: https://example.com/index.html）', true)}
+      ${fRow('通知タイミング（営業日）', fInput('slack_notify_days', s.notify_business_days ?? 10, 'number', 'min="1" max="60"'), '残り何営業日以内なら通知するか（既定: 10）。暦日4日でも営業日2日なら閾値4で通知', true)}
+      <div class="form-actions">
+        <button type="button" class="btn-cancel" onclick="triggerSlackNotify(true)">🔍 通知対象プレビュー</button>
+        <button type="button" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 16px;cursor:pointer" onclick="triggerSlackTestPing()">📡 接続テスト送信</button>
+        <button type="button" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 16px;cursor:pointer" onclick="triggerSlackNotify(false)" title="通常は毎日自動実行。テスト用">⚙️ 手動送信（テスト）</button>
+        <button type="submit" class="btn-primary">保存</button>
+      </div>`;
+    }
+    async function saveSlackSettings(e) {
+      e.preventDefault(); if (!isAdmin()) return;
+      const pw = getSlackAdminPassword();
+      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
+      const fd = new FormData(e.target);
+      const botToken = (fd.get('slack_bot_token') || '').trim();
+      if (botToken && botToken.startsWith('xoxp-')) {
+        toast('User OAuth Token（xoxp-）ではなく Bot User OAuth Token（xoxb-）を貼り付けてください', 'error');
+        return;
+      }
+      if (botToken && !botToken.startsWith('xoxb-')) {
+        toast('Bot トークンは xoxb- で始まる必要があります', 'error');
+        return;
+      }
+      const { error } = await db.rpc('staff_save_slack_settings', {
+        p_admin_login_id: getOperatorLoginId(),
+        p_admin_password: pw,
+        p_enabled: fd.get('slack_enabled') === 'on',
+        p_webhook_url: fd.get('slack_webhook_url') || null,
+        p_app_base_url: fd.get('slack_app_base_url') || null,
+        p_notify_business_days: parseInt(fd.get('slack_notify_days'), 10) || 10,
+        p_bot_token: fd.get('slack_bot_token') || null,
+        p_channel_id: fd.get('slack_channel_id') || null,
+        p_cron_enabled: fd.get('slack_cron_enabled') === 'on',
+      });
+      if (error) { toast(errMsg(error), 'error'); return; }
+      toast('Slack 通知設定を保存しました');
+      loadSlackSettingsForm();
+    }
+    async function triggerSlackTestPing() {
+      if (!isAdmin()) return;
+      const pw = getSlackAdminPassword();
+      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
+      const botToken = (document.querySelector('[name=slack_bot_token]')?.value || '').trim();
+      const channelId = (document.querySelector('[name=slack_channel_id]')?.value || '').trim();
+      if (!botToken || !channelId) {
+        toast('Bot トークン（xoxb-）とチャンネル ID（C...）の両方を入力してからテストしてください', 'error');
+        return;
+      }
+      toast('Slack 接続テスト送信中...');
+      const { error } = await db.rpc('staff_test_slack_ping', {
+        p_admin_login_id: getOperatorLoginId(),
+        p_admin_password: pw,
+        p_bot_token: botToken || null,
+        p_channel_id: channelId || null,
+      });
+      if (error) {
+        const msg = errMsg(error);
+        if (/staff_test_slack_ping|Could not find the function/i.test(msg)) {
+          toast('接続テスト機能が未作成です。supabase_patch_slack_auth_fix.sql を実行してください', 'error');
+        } else {
+          toast(msg, 'error');
+        }
+        return;
+      }
+      toast('Slack 接続テストを送信しました。期間管理通知チャンネルを確認してください');
+    }
+    async function triggerSlackNotify(dryRun) {
+      if (!isAdmin()) return;
+      const pw = getSlackAdminPassword();
+      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
+      toast(dryRun ? '通知対象を確認中...' : 'Slack 通知を送信中...');
+      try {
+        const data = await getData();
+        const threshold = parseInt(document.querySelector('[name=slack_notify_days]')?.value, 10) || 10;
+        const baseUrl = (document.querySelector('[name=slack_app_base_url]')?.value || defaultAppBaseUrl()).replace(/\/$/, '');
+        const today = todayJST();
+        const items = buildDeadlineItems(data)
+          .filter(it => {
+            if (it.days === null || it.days < 0) return false;
+            if (it.daysPhase === 'until_start') return false;
+            const bd = businessDaysUntil(it.deadline, today);
+            return bd !== null && bd <= threshold;
+          })
+          .map(it => ({
+            subsidy_type: it.type,
+            application_id: it.appId,
+            company_id: it.companyId,
+            company_name: it.companyName,
+            target: it.target,
+            kind: it.kind,
+            deadline_date: toDateKey(it.deadline),
+            business_days: businessDaysUntil(it.deadline, today),
+            link: `${baseUrl}#company/${it.companyId}/status?section=${it.type}&app=${it.appId}`,
+          }));
+        const { data: result, error } = await db.rpc('staff_run_slack_notify', {
+          p_admin_login_id: getOperatorLoginId(),
+          p_admin_password: pw,
+          p_dry_run: dryRun,
+          p_items: items,
+        });
+        if (error) {
+          const msg = errMsg(error);
+          if (/staff_run_slack_notify|Could not find the function|schema cache/i.test(msg)) {
+            toast('staff_run_slack_notify が未作成です。supabase_patch_slack_notify_rpc.sql を SQL Editor で実行してください', 'error');
+          } else {
+            toast(msg, 'error');
+          }
+          return;
+        }
+        const json = typeof result === 'string' ? JSON.parse(result) : result;
+        if (json.skipped === 'notifications disabled') { toast('通知が無効です。有効化して Webhook を設定してください', 'error'); return; }
+        if (dryRun) {
+          toast(`対象 ${json.candidates} 件 / 新規通知 ${json.sent_count} 件（送信なし）`);
+          return;
+        }
+        if (json.sent_count === 0) {
+          toast(`送信 0 件（対象 ${json.candidates} 件 / 既送信スキップ ${json.skipped_count} 件）。期限が閾値内の未通知案件がありません`, 'error');
+          return;
+        }
+        toast(`Slack 送信: ${json.sent_count} 件（スキップ ${json.skipped_count} 件）`);
+      } catch (err) {
+        toast(errMsg(err) || 'Slack 通知処理に失敗しました', 'error');
+      }
+    }
 
     function showFormDeadlines() {
       if (!requireOperator()) return;
@@ -1682,9 +1992,14 @@
     function overlayClick(e) { if (e.target === document.getElementById('modal-overlay')) closeModal(); }
 
     function showHelpGuide() {
-      const subsidyRows = Object.entries(TYPE_LABEL).map(([k, label]) =>
-        `<tr><td><span class="stbadge" style="${TYPE_STYLE[k]}">${label}</span></td><td>一覧表・ダッシュボード・会社詳細の助成金ラベル</td></tr>`
-      ).join('');
+      const subsidyManualRows = [
+        ['career_up', '正社員化コース。転換日から1回目/2回目の申請期限を管理'],
+        ['biz', '業務改善（50/70/90円コース）。年度締切・事業完了・支給申請'],
+        ['work', '働き方改革。交付申請・事業完了・支給申請'],
+        ['dual', '両立支援6コース。起算日・申請可能日・支給申請期限'],
+        ['reskill', 'リスキリング。計画届・訓練期間・支給申請'],
+        ['over65', '65歳超雇用推進。計画認定・措置実施・支給申請'],
+      ].map(([k, desc]) => `<tr><td><span class="stbadge" style="${TYPE_STYLE[k]}">${TYPE_LABEL[k]}</span></td><td>${desc}</td></tr>`).join('');
       const statusSamples = [
         ['未申請', 'まだ申請していない'],
         ['交付決定済 / 訓練実施中', '手続きの途中'],
@@ -1692,75 +2007,152 @@
         ['承認済', '支給決定・手続き完了'],
         ['不承認', '不支給・却下'],
       ].map(([s, desc]) => `<tr><td>${stBadge(s.split(' / ')[0])}</td><td>${desc}</td></tr>`).join('');
-      openModal('📖 使い方ガイド', `
+      openModal('📖 操作マニュアル', `
     <div style="max-height:70vh;overflow-y:auto;padding-right:4px">
+
       <div class="help-section">
-        <h3>🗺️ 画面の見方</h3>
+        <h3>1. はじめに</h3>
+        <p>助成金統合管理システムは、複数助成金の<strong>期限管理・申請状況・書類チェック</strong>を一括で行うためのツールです。</p>
         <ul>
-          <li><strong>ダッシュボード</strong> … 全助成金の期限・申請状況を横断表示。会社名検索・助成金タブ・申請状況フィルタが使えます。</li>
-          <li><strong>会社</strong> … 取引先ごとの案件数と期限アラート。カードをクリックすると会社詳細へ。</li>
-          <li><strong>各助成金タブ</strong> … 助成金種別の全件一覧。＋新規登録・✏️編集・削除ができます。</li>
-          <li><strong>会社詳細</strong> … 「履歴タイムライン」と「申請状況」タブ。メモも追加できます。</li>
+          <li><strong>閲覧のみ</strong> … ログイン不要。期限・一覧・会社詳細の確認ができます。</li>
+          <li><strong>編集モード</strong> … 右上「👤 ログイン」からIDとパスワードでログイン。登録・編集・削除・書類チェック・変更履歴の記録が可能です。</li>
         </ul>
       </div>
 
       <div class="help-section">
-        <h3>⏱️ 残日数バッジ（最重要）</h3>
+        <h3>2. 画面構成</h3>
+        <table class="help-table">
+          <thead><tr><th>メニュー</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td><strong>📊 ダッシュボード</strong></td><td>全助成金を横断した期限・申請状況の一覧。今週の期限パネル・集計カードあり。</td></tr>
+            <tr><td><strong>🏢 会社</strong></td><td>取引先一覧。期限アラート付きカード。クリックで会社詳細へ。</td></tr>
+            <tr><td><strong>👔🏭⏰👶📚👴 各助成金タブ</strong></td><td>助成金種別の全件一覧。新規登録・編集・削除。</td></tr>
+            <tr><td><strong>❓ 使い方</strong></td><td>この操作マニュアルを表示します。</td></tr>
+            <tr><td><strong>👤 ログイン</strong></td><td>ログイン・ログアウト。一般：パスワード変更。管理者：アカウント管理。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="help-section">
+        <h3>3. ログイン・アカウント</h3>
+        <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">3-1. ログイン</h4>
+        <ol style="margin:0 0 10px 18px;font-size:13px;color:#374151;line-height:1.7">
+          <li>右上「👤 ログイン」をクリック</li>
+          <li>ログインID・パスワードを入力して「ログイン」</li>
+          <li>ログイン後、右上に表示名が出ます。編集ボタン（✏️・＋）が使えるようになります</li>
+        </ol>
+        <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">3-2. パスワード変更</h4>
+        <ul>
+          <li><strong>一般アカウント</strong> … ログインモーダルの「🔑 パスワード変更」。<strong>現在のパスワード</strong>＋新パスワード（8文字以上）が必要。</li>
+          <li><strong>管理者</strong> … 「👥 アカウント管理」→ 一覧の「PW変更」。相手の現在PWは不要。管理者PWで認証。</li>
+        </ul>
+        <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">3-3. アカウント管理（管理者のみ）</h4>
+        <ol style="margin:0 0 10px 18px;font-size:13px;color:#374151;line-height:1.7">
+          <li>ログイン後「👥 アカウント管理」を開く</li>
+          <li>管理者パスワードを入力 → 登録アカウント一覧が<strong>自動表示</strong></li>
+          <li>「＋ アカウント作成」で表示名・ログインID・パスワード・権限（一般/管理者）を設定</li>
+          <li>一覧から権限変更・PW変更・削除が可能（初期 admin は保護）</li>
+        </ol>
+      </div>
+
+      <div class="help-section">
+        <h3>4. ダッシュボードの操作</h3>
+        <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">4-1. 表示モード（3種類）</h4>
+        <table class="help-table">
+          <thead><tr><th>モード</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td>⚠️ 期限一覧</td><td>要対応の期限を残日数順に表示。上部に集計カード（期限切れ/7日/30日/余裕）あり。</td></tr>
+            <tr><td>📋 申請状況</td><td>申請ステータス中心の一覧。主要期限・残日数も確認可。</td></tr>
+            <tr><td>🕐 案件登録順</td><td>登録日時の<strong>新しい順</strong>。最近追加した案件の確認に便利。</td></tr>
+          </tbody>
+        </table>
+        <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">4-2. 絞り込み</h4>
+        <ul>
+          <li><strong>会社名検索</strong> … 入力するとリアルタイムで絞り込み</li>
+          <li><strong>申請状況ドロップダウン</strong> … 特定ステータスの案件のみ表示</li>
+          <li><strong>助成金タブ</strong> … キャリアアップ・業務改善など種別で絞り込み</li>
+          <li><strong>期限切れを非表示</strong> … 🔴期限超過案件を一覧から隠す（データは残る）</li>
+        </ul>
+        <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">4-3. その他</h4>
+        <ul>
+          <li><strong>📅 今週の期限</strong> … 残7日以内、または超過から7日以内の案件（1週間以上前の期限切れは除外）</li>
+          <li><strong>⚙️ 年度期限設定</strong> … 業務改善・働き方改革・リスキリングの<strong>国の年度締切</strong>を更新（ログイン必要）</li>
+          <li><strong>💬 Slack通知</strong> … 管理者のみ。残り10営業日で Slack 通知。通知ボタンから該当案件へ直接移動</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>5. 会社一覧・会社詳細</h3>
+        <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">5-1. 会社一覧</h4>
+        <ul>
+          <li>「＋ 会社登録」で取引先を追加（社内担当者・規模・業種など）</li>
+          <li>カード左の<strong>赤/オレンジ線</strong>・「🔴 期限注意」「🟠 30日以内」バッジで急ぎの案件数を表示</li>
+          <li>カードクリック → 会社詳細へ</li>
+        </ul>
+        <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">5-2. 会社詳細</h4>
+        <ul>
+          <li><strong>⚠️ 要確認の期限</strong> … 画面上部に固定表示。期限注意・30日以内の案件を一覧。行クリックで「申請状況」タブの該当案件へ移動（行がハイライト表示）</li>
+          <li><strong>📅 履歴タイムライン</strong> … 転換日・申請日などの時系列＋メモ。「＋ メモ追加」で打合せ記録</li>
+          <li><strong>📝 変更履歴</strong> … タイムライン下部。行クリックで「申請状況」タブの該当案件へ移動（行がハイライト表示）</li>
+          <li><strong>📋 申請状況</strong> … 助成金別の案件一覧。各行から ✏️編集・📎書類チェック</li>
+          <li>案件一覧には<strong>登録した実績日</strong>（交付申請日・決定日など）を表示。年度締切は各助成金ブロック<strong>上部</strong>に表示</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>6. 案件の登録・編集・削除</h3>
+        <table class="help-table">
+          <thead><tr><th>操作</th><th>手順</th></tr></thead>
+          <tbody>
+            <tr><td><strong>新規登録</strong></td><td>会社詳細「申請状況」の「＋ 登録」、または各助成金タブの「＋ 新規登録」</td></tr>
+            <tr><td><strong>編集</strong></td><td>一覧の ✏️ → 状況・日付を更新 → 保存（残日数は自動再計算）</td></tr>
+            <tr><td><strong>削除</strong></td><td>編集フォーム下部「削除」（元に戻せません）</td></tr>
+            <tr><td><strong>書類チェック</strong></td><td>会社詳細「申請状況」の 📎 → 必要書類にチェック（ログイン必要）</td></tr>
+            <tr><td><strong>一括登録</strong></td><td>キャリアアップ：複数名を一度に登録するフォームあり</td></tr>
+          </tbody>
+        </table>
+        <div class="help-callout">👔 キャリアアップ：重点支援対象者は<strong>1人1案件</strong>として表示。1回目が承認済になると2回目の情報に切り替わります。</div>
+      </div>
+
+      <div class="help-section">
+        <h3>7. 残日数バッジの見方</h3>
         <p>期限日までの残り日数に応じて、表の「残日数」列などに色付きバッジが表示されます。</p>
         <table class="help-table">
           <thead><tr><th>表示</th><th>条件</th><th>意味・対応</th></tr></thead>
           <tbody>
             <tr><td>${deadlineBadge(-12)}</td><td>期限日を <strong>12日過ぎている</strong></td><td>期限超過。至急確認・申請状況の更新が必要です。</td></tr>
             <tr><td>${deadlineBadge(0)}</td><td>期限日が <strong>今日</strong></td><td>本日期限。当日中の対応を。</td></tr>
-            <tr><td>${deadlineBadge(5)}</td><td>期限まで <strong>7日以内</strong>（1〜7日）</td><td>早急対応ゾーン。書類準備・申請を進めてください。</td></tr>
+            <tr><td>${deadlineBadge(5)}</td><td>期限まで <strong>7日以内</strong></td><td>早急対応ゾーン。書類準備・申請を進めてください。</td></tr>
             <tr><td>${deadlineBadge(20)}</td><td>期限まで <strong>8〜30日</strong></td><td>そろそろ準備。スケジュールを確認してください。</td></tr>
             <tr><td>${deadlineBadge(60)}</td><td>期限まで <strong>31日以上</strong></td><td>余裕あり。計画どおり進められます。</td></tr>
-            <tr><td>${deadlineBadge(null)}</td><td>残日数が <strong>計算対象外</strong></td><td>申請済・承認済など<strong>期限管理不要</strong>、または入力不足で期限未算出。</td></tr>
-            <tr><td><span class="badge badge-gray">済</span></td><td>該当工程が <strong>完了</strong></td><td>交付申請済・事業完了済など、その段階は終わっています。</td></tr>
+            <tr><td>${deadlineBadge(null)}</td><td>残日数 <strong>計算対象外</strong></td><td>承認済など期限管理不要、または入力不足。</td></tr>
+            <tr><td><span class="badge" style="background:#dbeafe;color:#1e40af">📅 申請まで○日</span></td><td>両立支援</td><td>申請可能日前。起算日からの待機期間。</td></tr>
           </tbody>
         </table>
-        <div class="help-callout">💡 「期限切れを非表示」にチェックを入れると、🔴 期限超過の案件だけ一覧から隠せます（データは削除されません）。</div>
       </div>
 
       <div class="help-section">
-        <h3>📊 ダッシュボード上部の集計カード</h3>
-        <p>「⚠️ 期限一覧」モードのとき、4枚のカードで件数を集計します（残日数バッジと同じ基準）。</p>
+        <h3>8. 集計・通知の基準</h3>
         <table class="help-table">
-          <thead><tr><th>カード</th><th>件数に含まれる条件</th></tr></thead>
+          <thead><tr><th>対象</th><th>🔴 期限注意</th><th>🟠 30日以内</th></tr></thead>
           <tbody>
-            <tr><td>🔴 期限切れ</td><td>残日数がマイナス（期限超過）</td></tr>
-            <tr><td>🟠 残7日以内</td><td>残日数 0〜7日（本日含む）</td></tr>
-            <tr><td>🟡 残30日以内</td><td>残日数 8〜30日</td></tr>
-            <tr><td>🟢 余裕あり</td><td>残日数 31日以上、または完了で残日数なし</td></tr>
+            <tr><td>ダッシュボード集計カード</td><td>残日数 0日以下〜7日</td><td>残日数 8〜30日</td></tr>
+            <tr><td>会社一覧カード</td><td>同上（1週間以上前の期限切れは<strong>除外</strong>）</td><td>同上</td></tr>
+            <tr><td>要対応期限一覧</td><td colspan="2">期限切れ案件は一覧<strong>最下部</strong>に表示（1週間以上前の期限切れは最下段）</td></tr>
           </tbody>
         </table>
-        <p style="margin-top:10px">「📋 申請状況」モードに切り替えると、期限ではなく<strong>申請ステータス</strong>中心の一覧になります。「🕐 案件登録順」は<strong>新しい登録順</strong>（登録日時の降順）で案件を表示します。</p>
       </div>
 
       <div class="help-section">
-        <h3>🏢 会社一覧カードの左ボーダー</h3>
+        <h3>9. 助成金種別</h3>
         <table class="help-table">
-          <thead><tr><th>色</th><th>条件</th></tr></thead>
-          <tbody>
-            <tr><td style="border-left:4px solid #ef4444;padding-left:12px">赤い線</td><td>期限超過<strong>7日以内</strong>、または<strong>7日以内</strong>の期限が1件以上（1週間以上前の期限切れは含まない）</td></tr>
-            <tr><td style="border-left:4px solid #f97316;padding-left:12px">オレンジ線</td><td>赤条件はないが、<strong>30日以内</strong>の期限が1件以上</td></tr>
-            <tr><td>線なし</td><td>30日超の期限のみ、または期限なし</td></tr>
-          </tbody>
-        </table>
-        <p>カード内の「🔴 期限注意」「🟠 30日以内」バッジも同じ基準です（1週間以上前に切れた案件は通知しません）。</p>
-      </div>
-
-      <div class="help-section">
-        <h3>🏷️ 助成金種別ラベルの色</h3>
-        <table class="help-table">
-          <thead><tr><th>ラベル</th><th>表示場所</th></tr></thead>
-          <tbody>${subsidyRows}</tbody>
+          <thead><tr><th>ラベル</th><th>概要</th></tr></thead>
+          <tbody>${subsidyManualRows}</tbody>
         </table>
       </div>
 
       <div class="help-section">
-        <h3>📋 申請状況バッジ</h3>
-        <p>案件の進捗段階を表します（助成金ごとに選択肢は異なります）。</p>
+        <h3>10. 申請状況バッジ（例）</h3>
         <table class="help-table">
           <thead><tr><th>例</th><th>目安</th></tr></thead>
           <tbody>${statusSamples}</tbody>
@@ -1768,40 +2160,22 @@
       </div>
 
       <div class="help-section">
-        <h3>📅 主な期限の自動計算</h3>
+        <h3>11. 期限の自動計算</h3>
         <ul>
-          <li><strong>👔 キャリアアップ</strong> … 正社員転換日・給与支給日から1回目・2回目申請期限。重点支援対象者は1件として表示し、1回目承認後に2回目に切り替わります。</li>
-          <li><strong>🏭 業務改善</strong> … 年度の事業完了期限・事業完了日から30日以内の支給申請期限</li>
+          <li><strong>👔 キャリアアップ</strong> … 転換日・給与支給日から1回目/2回目申請期限</li>
+          <li><strong>🏭 業務改善</strong> … 年度事業完了期限・完了日+30日以内の支給申請</li>
           <li><strong>⏰ 働き方改革</strong> … 交付申請・事業完了（年度）・支給申請期限</li>
-          <li><strong>👶 両立支援</strong> … 起算日からコース別に支給申請期限。申請可能日前は<strong>申請まで○日</strong>、以降は<strong>期限まで○日</strong>を表示。</li>
+          <li><strong>👶 両立支援</strong> … コース別起算日から申請可能日・支給申請期限</li>
           <li><strong>📚 リスキリング</strong> … 計画届（開始6か月前〜1か月前）・支給申請（終了/受験の2か月以内）</li>
-          <li><strong>👴 65歳超</strong> … 措置実施月の翌月から4か月以内（各月1〜15日）の支給申請</li>
+          <li><strong>👴 65歳超</strong> … 措置実施月の翌月から4か月以内（各月1〜15日）</li>
         </ul>
-        <div class="help-callout">⚙️ ダッシュボードの「年度期限設定」で、業務改善・働き方改革・リスキリングの<strong>年度制度締切</strong>を更新できます。各助成金ページの<strong>上部</strong>にも年度締切が表示されます。案件一覧の各行には<strong>登録した実績日</strong>を表示します。</div>
       </div>
 
       <div class="help-section">
-        <h3>👤 ログイン・担当者・変更履歴・書類</h3>
-        <ul>
-          <li><strong>👤 ログイン</strong> … 未ログインは<strong>閲覧のみ</strong>。ログイン後は登録・編集・削除などが可能。一般アカウントは<strong>🔑 パスワード変更</strong>で自分のPWを変更できます（現在のパスワード必要）。</li>
-          <li><strong>👥 アカウント管理</strong> … 管理者のみ。アカウント作成・権限変更・削除に加え、<strong>全員（自分含む）のパスワードを管理者権限で変更</strong>できます（相手の現在PW不要・管理者PWのみ）。</li>
-          <li><strong>社内担当者</strong> … 会社登録・編集で設定。会社一覧・会社詳細に表示されます（取引先側ではなく事務所側の担当）。</li>
-          <li><strong>📅 今週の期限</strong> … ダッシュボード上部。期限まで7日以内、または期限超過から7日以内の案件のみ表示（1週間以上前に切れた案件は含みません）。</li>
-          <li><strong>📎 書類チェック</strong> … 会社詳細「申請状況」タブの各行。助成金ごとの必要書類をチェックできます。</li>
-          <li><strong>📝 変更履歴</strong> … 会社詳細「履歴タイムライン」タブの下部。誰がいつ何を変更したかを記録します。</li>
-        </ul>
-        <div class="help-callout">初回利用時は Supabase で <code>supabase_add_features_23568.sql</code> を実行してください（担当者・履歴・書類テーブル）。</div>
+        <h3>12. 変更履歴</h3>
+        <p>ログイン中の編集・削除・年度期限更新などは、会社詳細「履歴タイムライン」下部の<strong>📝 変更履歴</strong>に記録されます（誰が・いつ・何を変更したか）。行をクリックすると「申請状況」タブの該当案件へ移動し、行がハイライト表示されます。</p>
       </div>
 
-      <div class="help-section">
-        <h3>✏️ よく使う操作</h3>
-        <ul>
-          <li>一覧の <strong>✏️</strong> … 案件を編集（状況・日付を更新すると残日数も再計算）</li>
-          <li>会社詳細の <strong>＋ 登録</strong> … その会社に紐づく新規案件</li>
-          <li>会社詳細の <strong>＋ メモ追加</strong> … 電話・打合せなどの履歴</li>
-          <li>フォームの <strong>削除</strong> … 案件を完全に削除（元に戻せません）</li>
-        </ul>
-      </div>
     </div>
     <div style="text-align:right;margin-top:16px">
       <button type="button" onclick="closeModal()" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:500">閉じる</button>
@@ -1860,6 +2234,26 @@
     // ================================================================
     //  会社フォーム
     // ================================================================
+    function findExistingCompany(name, excludeId = null) {
+      if (!name?.trim()) return null;
+      const trimmed = name.trim();
+      const norm = normalizeSearchText(trimmed);
+      return (cache?.companies || []).find(c => {
+        if (excludeId && c.id === excludeId) return false;
+        return c.name === trimmed || normalizeSearchText(c.name) === norm;
+      }) || null;
+    }
+    function showDuplicateCompanyDialog(company, attemptedName) {
+      const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      openModal('会社がすでに存在します', `
+    <p style="font-size:14px;color:#374151;margin:0 0 12px">「<strong>${esc(attemptedName)}</strong>」はすでに登録されています。</p>
+    <p style="font-size:13px;color:#6b7280;margin:0 0 16px">既存の会社: <strong>${esc(company.name)}</strong></p>
+    <div class="form-actions" style="margin-top:0">
+      <button type="button" class="btn-cancel" onclick="showFormCompany()">別の名前で登録</button>
+      <button type="button" class="btn-primary" onclick="closeModal();location.hash='#company/${company.id}'">会社詳細を開く</button>
+    </div>
+  `);
+    }
     function showFormCompany(co = null) {
       if (!requireOperator()) return;
       const isEdit = !!co;
@@ -1877,14 +2271,32 @@
     async function saveCompany(e, id) {
       e.preventDefault(); if (!requireOperator()) return;
       const fd = new FormData(e.target);
-      const data = { name: fd.get('name'), internal_assignee: fd.get('internal_assignee') || null, size_category: fd.get('size_category') || null, industry: fd.get('industry') || null, notes: fd.get('notes') || null };
-      const { error } = id ? await db.from('companies').update(data).eq('id', id) : null;
+      const data = { name: (fd.get('name') || '').trim(), internal_assignee: fd.get('internal_assignee') || null, size_category: fd.get('size_category') || null, industry: fd.get('industry') || null, notes: fd.get('notes') || null };
+      if (!data.name) { toast('会社名を入力してください', 'error'); return; }
+      if (!cache) cache = await getData();
+      let duplicate = findExistingCompany(data.name, id || null);
+      if (duplicate) { showDuplicateCompanyDialog(duplicate, data.name); return; }
       let companyId = id;
       if (id) {
-        if (error) { toast(errMsg(error), 'error'); return; }
+        const { error } = await db.from('companies').update(data).eq('id', id);
+        if (error) {
+          if (error.code === '23505') {
+            cache = null; await getData();
+            duplicate = findExistingCompany(data.name, id);
+            if (duplicate) { showDuplicateCompanyDialog(duplicate, data.name); return; }
+          }
+          toast(errMsg(error), 'error'); return;
+        }
       } else {
         const ins = await db.from('companies').insert(data).select('id').single();
-        if (ins.error) { toast(errMsg(ins.error), 'error'); return; }
+        if (ins.error) {
+          if (ins.error.code === '23505') {
+            cache = null; await getData();
+            duplicate = findExistingCompany(data.name);
+            if (duplicate) { showDuplicateCompanyDialog(duplicate, data.name); return; }
+          }
+          toast(errMsg(ins.error), 'error'); return;
+        }
         companyId = ins.data.id;
       }
       await logAudit({ companyId, tableName: 'companies', recordId: companyId, action: id ? 'update' : 'insert', summary: id ? `会社情報更新: ${data.name}` : `会社新規登録: ${data.name}` });
@@ -2372,7 +2784,7 @@
          </div>
          <div style="font-size:12px;color:#6b7280">${ev.detail}</div>
          ${ev.status ? `<div style="margin-top:4px">${stBadge(ev.status)}</div>` : ''}`;
-        html += `<div class="tl-item">
+        html += `<div class="tl-item"${isNote && ev.noteObj?.id ? ` id="co-note-${ev.noteObj.id}"` : ''}>
       <div class="tl-date">${fmt(d)}</div>
       <div class="tl-line"><div class="tl-dot" style="background:${DOT[ev.type] || '#9ca3af'}"></div><div class="tl-vline"></div></div>
       <div class="tl-body${isNote ? ' tl-note' : ''}">${body}</div>
@@ -2635,7 +3047,10 @@
       if (getHideExpired()) items = items.filter(i => !isExpiredDeadline(i.days));
       if (dashFilter.type !== 'all') items = items.filter(i => i.type === dashFilter.type);
       if (!skipStatus && dashFilter.status !== 'all') items = items.filter(i => (i.status || '—') === dashFilter.status);
-      if (dashFilter.query) items = items.filter(i => i.companyName.includes(dashFilter.query));
+      if (dashFilter.query) items = items.filter(i =>
+        includesNormalized(i.companyName, dashFilter.query) ||
+        includesNormalized(i.target || '', dashFilter.query)
+      );
       return items;
     }
 
@@ -2725,25 +3140,25 @@
         const co = app.company?.name || ''; const cid = app.company_id;
         const ri = getCuRoundInfo(app);
         if (ri.deadline) items.push({
-          type: 'career_up', companyName: co, companyId: cid, target: app.employee_name,
+          type: 'career_up', companyName: co, companyId: cid, appId: app.id, target: app.employee_name,
           kind: `${ri.roundLabel} 申請期限`, deadline: ri.deadline, days: ri.days, status: ri.status,
         });
       });
       data.biz.forEach(app => {
         const d = calcBiz(app); const co = app.company?.name || ''; const cid = app.company_id;
-        if (d.compDays !== null) items.push({ type: 'biz', companyName: co, companyId: cid, target: null, kind: '事業完了期限（年度）', deadline: d.compLimit, days: d.compDays, status: app.status });
-        if (d.supLimit) items.push({ type: 'biz', companyName: co, companyId: cid, target: null, kind: '支給申請期限', deadline: d.supLimit, days: d.supDays, status: app.status });
+        if (d.compDays !== null) items.push({ type: 'biz', companyName: co, companyId: cid, appId: app.id, target: null, kind: '事業完了期限（年度）', deadline: d.compLimit, days: d.compDays, status: app.status });
+        if (d.supLimit) items.push({ type: 'biz', companyName: co, companyId: cid, appId: app.id, target: null, kind: '支給申請期限', deadline: d.supLimit, days: d.supDays, status: app.status });
       });
       data.work.forEach(app => {
         const d = calcWork(app); const co = app.company?.name || ''; const cid = app.company_id;
-        if (d.appDays !== null) items.push({ type: 'work', companyName: co, companyId: cid, target: null, kind: '交付申請期限（年度）', deadline: d.appLimit, days: d.appDays, status: app.status });
-        if (d.compDays !== null) items.push({ type: 'work', companyName: co, companyId: cid, target: null, kind: '事業完了期限（年度）', deadline: d.compLimit, days: d.compDays, status: app.status });
-        if (d.supLimit) items.push({ type: 'work', companyName: co, companyId: cid, target: null, kind: '支給申請期限', deadline: d.supLimit, days: d.supDays, status: app.status });
+        if (d.appDays !== null) items.push({ type: 'work', companyName: co, companyId: cid, appId: app.id, target: null, kind: '交付申請期限（年度）', deadline: d.appLimit, days: d.appDays, status: app.status });
+        if (d.compDays !== null) items.push({ type: 'work', companyName: co, companyId: cid, appId: app.id, target: null, kind: '事業完了期限（年度）', deadline: d.compLimit, days: d.compDays, status: app.status });
+        if (d.supLimit) items.push({ type: 'work', companyName: co, companyId: cid, appId: app.id, target: null, kind: '支給申請期限', deadline: d.supLimit, days: d.supDays, status: app.status });
       });
       data.dual.forEach(app => {
         const d = calcDual(app); const co = app.company?.name || ''; const cid = app.company_id;
         if (d.deadline && d.days !== null && d.days !== undefined) items.push({
-          type: 'dual', companyName: co, companyId: cid, target: app.employee_name,
+          type: 'dual', companyName: co, companyId: cid, appId: app.id, target: app.employee_name,
           kind: d.daysPhase === 'until_start' ? `申請可能まで (${app.support_course})` : `支給申請期限 (${app.support_course})`,
           deadline: d.daysPhase === 'until_start' ? d.appStart : d.deadline,
           days: d.days, daysPhase: d.daysPhase, status: app.status,
@@ -2751,13 +3166,13 @@
       });
       data.reskill.forEach(app => {
         const d = calcReskill(app); const co = app.company?.name || ''; const cid = app.company_id;
-        if (d.planDays !== null) items.push({ type: 'reskill', companyName: co, companyId: cid, target: app.training_name, kind: '計画届提出期限', deadline: d.planLimit, days: d.planDays, status: app.status });
-        if (d.supLimit && d.supDays !== null) items.push({ type: 'reskill', companyName: co, companyId: cid, target: app.training_name, kind: app.exam_date ? '支給申請期限（受験日起算）' : '支給申請期限（訓練終了日起算）', deadline: d.supLimit, days: d.supDays, status: app.status });
-        if (d.programDays !== null) items.push({ type: 'reskill', companyName: co, companyId: cid, target: app.training_name, kind: '制度終了（令和8年度末）', deadline: d.programEnd, days: d.programDays, status: app.status });
+        if (d.planDays !== null) items.push({ type: 'reskill', companyName: co, companyId: cid, appId: app.id, target: app.training_name, kind: '計画届提出期限', deadline: d.planLimit, days: d.planDays, status: app.status });
+        if (d.supLimit && d.supDays !== null) items.push({ type: 'reskill', companyName: co, companyId: cid, appId: app.id, target: app.training_name, kind: app.exam_date ? '支給申請期限（受験日起算）' : '支給申請期限（訓練終了日起算）', deadline: d.supLimit, days: d.supDays, status: app.status });
+        if (d.programDays !== null) items.push({ type: 'reskill', companyName: co, companyId: cid, appId: app.id, target: app.training_name, kind: '制度終了（令和8年度末）', deadline: d.programEnd, days: d.programDays, status: app.status });
       });
       data.over65.forEach(app => {
         const d = calcOver65(app); const co = app.company?.name || ''; const cid = app.company_id;
-        if (d.deadline && d.days !== null) items.push({ type: 'over65', companyName: co, companyId: cid, target: app.target_name, kind: `支給申請期限（${app.course_type}）`, deadline: d.deadline, days: d.days, status: app.status });
+        if (d.deadline && d.days !== null) items.push({ type: 'over65', companyName: co, companyId: cid, appId: app.id, target: app.target_name, kind: `支給申請期限（${app.course_type}）`, deadline: d.deadline, days: d.days, status: app.status });
       });
       return sortDeadlineItems(items);
     }
@@ -2795,6 +3210,7 @@
       <h1 style="font-size:18px;font-weight:700;color:#111827">📊 ダッシュボード</h1>
       <div style="display:flex;align-items:center;gap:14px">
         ${renderDeadlineSettingsBtn()}
+        ${renderSlackSettingsBtn()}
         ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
         <span style="font-size:12px;color:#9ca3af">${todayStr}</span>
       </div>
@@ -2802,7 +3218,7 @@
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">${modeTabs}</div>
     <div id="dash-weekly">${renderWeeklyPanel(data)}</div>
     <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
-      <input id="dash-search" type="text" placeholder="🔍 会社名で絞り込み..."
+      <input id="dash-search" type="text" placeholder="🔍 会社名・対象者名で絞り込み..."
         style="flex:1;min-width:200px;max-width:360px;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px"
         oninput="doDashSearch()">
       <div id="dash-status-filter">${renderStatusDropdown(forStatusChips, 'all')}</div>
@@ -2830,7 +3246,7 @@
     // ================================================================
     function renderCompanies(data, query) {
       let companies = data.companies;
-      if (query) companies = companies.filter(c => c.name.includes(query));
+      if (query) companies = companies.filter(c => includesNormalized(c.name, query));
       // count applications per company
       const cnt = {};
       const inc = (k, id) => { if (!cnt[id]) cnt[id] = { cu: 0, bi: 0, ws: 0, ds: 0, rs: 0, o65: 0 }; cnt[id][k]++; };
@@ -2936,9 +3352,8 @@
         buildCompanyDeadlineItems(det).filter(i => i.days !== null && !isStaleExpired(i.days) && i.days <= 30)
       );
     }
-    function scrollToCompanySection(cid, type) {
-      switchDetailTab('status', cid);
-      setTimeout(() => document.getElementById(`co-section-${type}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+    function scrollToCompanySection(cid, type, recordId) {
+      scrollToCompanyRecord(cid, type, recordId || null);
     }
     function renderCompanyUrgencyPanel(det, cid) {
       const items = getCompanyAttentionItems(det);
@@ -2953,7 +3368,7 @@
         urgentCount ? `<span style="background:#fee2e2;color:#991b1b;border-radius:10px;padding:3px 10px;font-size:12px;font-weight:700">🔴 期限注意 ${urgentCount}件</span>` : '',
         warningCount ? `<span style="background:#ffedd5;color:#9a3412;border-radius:10px;padding:3px 10px;font-size:12px;font-weight:600">🟠 30日以内 ${warningCount}件</span>` : '',
       ].filter(Boolean).join(' ');
-      const rows = items.map(it => `<tr style="cursor:pointer" onclick="scrollToCompanySection('${cid}','${it.type}')" title="申請状況の該当欄へ">
+      const rows = items.map(it => `<tr style="cursor:pointer" onclick="scrollToCompanySection('${cid}','${it.type}','${it.appId || ''}')" title="申請状況の該当案件へ">
     <td><span class="stbadge" style="${TYPE_STYLE[it.type]};font-size:10px">${TYPE_LABEL[it.type]}</span></td>
     <td style="font-size:12px;color:#374151">${it.target || '—'}</td>
     <td style="font-size:12px;color:#6b7280">${it.kind}</td>
@@ -2972,7 +3387,7 @@
       <thead><tr style="color:#6b7280;font-size:11px"><th>助成金</th><th>対象</th><th>期限種別</th><th>期限日</th><th>残日数</th><th>状況</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <div style="padding:0 14px 10px;font-size:11px;color:#9ca3af">行をクリックすると「申請状況」タブの該当助成金へ移動します</div>
+    <div style="padding:0 14px 10px;font-size:11px;color:#9ca3af">行をクリックすると「申請状況」タブの該当案件へ移動し、行がハイライト表示されます</div>
   </div>`;
     }
 
@@ -2996,7 +3411,7 @@
     <div style="font-size:12px;color:#9ca3af;margin-bottom:10px">
       <a href="#companies" style="color:#2563eb;font-weight:500">← 会社一覧に戻る</a>
     </div>
-    <div class="card" style="padding:16px;margin-bottom:12px">
+    <div class="card" id="co-section-company" style="padding:16px;margin-bottom:12px;scroll-margin-top:16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
         <div style="flex:1;min-width:0">
           <h1 style="font-size:20px;font-weight:700;color:#111827;margin-bottom:4px">${company.name}</h1>
@@ -3041,7 +3456,7 @@
       <div style="max-width:680px">
         ${renderTimeline(timeline, cid)}
       </div>
-      ${renderAuditSection(auditLogs)}
+      ${renderAuditSection(auditLogs, cid)}
     </div>
 
     <!-- 申請状況タブ -->
@@ -3083,7 +3498,7 @@
       const rows = apps.map(app => {
         const ri = getCuRoundInfo(app);
         const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td style="font-weight:500">${app.employee_name}</td>
       <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.conversion_date))}</td>
       <td style="text-align:center">${app.is_priority_worker ? '✓' : '—'}</td>
@@ -3105,7 +3520,7 @@
     function renderBizSection(apps, companyId = null) {
       const rows = apps.map(app => {
         const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td>${app.wage_course || '—'}</td>
       <td>${app.worker_count || '—'}</td>
       <td style="font-size:12px;color:#4b5563;max-width:160px;overflow:hidden;text-overflow:ellipsis">${app.equipment_description || '—'}</td>
@@ -3126,7 +3541,7 @@
     function renderWorkSection(apps, companyId = null) {
       const rows = apps.map(app => {
         const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td style="font-size:12px">${app.goal_type || '—'}</td>
       ${statusDateRowCells('work', app)}
       <td>${stBadge(app.status)}</td>
@@ -3144,7 +3559,7 @@
     function renderDualSection(apps, companyId = null) {
       const rows = apps.map(app => {
         const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
       <td style="font-size:12px;white-space:nowrap">${app.support_course}</td>
       <td style="font-weight:500">${app.employee_name}</td>
@@ -3165,7 +3580,7 @@
     function renderReskillSection(apps, companyId = null) {
       const rows = apps.map(app => {
         const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td style="font-weight:500">${app.training_name}</td>
       <td style="font-size:12px">${app.training_category || '—'}</td>
       <td style="text-align:center">${app.trainee_count || '—'}</td>
@@ -3186,7 +3601,7 @@
     function renderOver65Section(apps, companyId = null) {
       const rows = apps.map(app => {
         const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
       <td style="font-weight:500">${app.target_name}</td>
       <td style="font-size:12px;color:#4b5563;max-width:160px;overflow:hidden;text-overflow:ellipsis">${app.measure_detail || '—'}</td>
@@ -3205,12 +3620,13 @@
     // ================================================================
     function addBtn(fn, label) { return `<button class="btn-add add-only" onclick="${fn}">＋ ${label}</button>`; }
 
-    function renderAllCareerUp(apps, companies) {
+    function renderAllCareerUp(apps, companies, query = '') {
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
-      const filtered = filterExpiredApps(apps, 'career_up');
+      let filtered = filterExpiredApps(apps, 'career_up');
+      if (query) filtered = filterSubsidyBySearch(filtered, companies, query, 'career_up');
       const rows = filtered.map(app => {
         const co = coMap[app.company_id]; const ri = getCuRoundInfo(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td style="font-weight:500">${app.employee_name}</td>
       <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.conversion_date))}</td>
@@ -3222,8 +3638,8 @@
       <td><button class="btn-edit edit-only" onclick='showFormCu(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
-      const hidden = apps.length - filtered.length;
-      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      const hidden = apps.length - filterExpiredApps(apps, 'career_up').length;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
     <h1 style="font-size:18px;font-weight:700;color:#111827">👔 キャリアアップ助成金 — 全件
       <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
       ${hidden ? `<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>` : ''}
@@ -3233,6 +3649,8 @@
       ${addBtn('showFormCu()', '新規登録')}
     </div>
   </div>
+  ${renderSubsidySearchBar('career-up', query, '🔍 会社名・従業員名で絞り込み...')}
+  ${query ? `<p style="font-size:13px;color:#6b7280;margin-bottom:12px">「${query}」の検索結果: ${filtered.length} 件</p>` : ''}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>従業員名</th><th>転換日</th><th>重点</th><th>回次</th>
     <th>申請期限</th><th>残日数</th><th>申請状況</th><th></th></tr></thead>
@@ -3240,12 +3658,13 @@
   </table></div></div>`;
     }
 
-    function renderAllBiz(apps, companies) {
+    function renderAllBiz(apps, companies, query = '') {
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
-      const filtered = filterExpiredApps(apps, 'biz');
+      let filtered = filterExpiredApps(apps, 'biz');
+      if (query) filtered = filterSubsidyBySearch(filtered, companies, query, 'biz');
       const rows = filtered.map(app => {
         const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td>${app.wage_course || '—'}</td><td>${app.worker_count || '—'}</td>
       ${statusDateRowCells('biz', app)}
@@ -3253,8 +3672,8 @@
       <td><button class="btn-edit edit-only" onclick='showFormBiz(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
-      const hidden = apps.length - filtered.length;
-      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      const hidden = apps.length - filterExpiredApps(apps, 'biz').length;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
     <h1 style="font-size:18px;font-weight:700;color:#111827">🏭 業務改善助成金 — 全件
       <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
       ${hidden ? `<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>` : ''}
@@ -3264,6 +3683,8 @@
       ${addBtn('showFormBiz()', '新規登録')}
     </div>
   </div>
+  ${renderSubsidySearchBar('biz', query, '🔍 会社名で絞り込み...')}
+  ${query ? `<p style="font-size:13px;color:#6b7280;margin-bottom:12px">「${query}」の検索結果: ${filtered.length} 件</p>` : ''}
   ${renderProgramLimitsBox('biz')}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>コース</th><th>人数</th>
@@ -3272,12 +3693,13 @@
   </table></div></div>`;
     }
 
-    function renderAllWork(apps, companies) {
+    function renderAllWork(apps, companies, query = '') {
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
-      const filtered = filterExpiredApps(apps, 'work');
+      let filtered = filterExpiredApps(apps, 'work');
+      if (query) filtered = filterSubsidyBySearch(filtered, companies, query, 'work');
       const rows = filtered.map(app => {
         const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td style="font-size:12px">${app.goal_type || '—'}</td>
       ${statusDateRowCells('work', app)}
@@ -3285,8 +3707,8 @@
       <td><button class="btn-edit edit-only" onclick='showFormWork(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
-      const hidden = apps.length - filtered.length;
-      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      const hidden = apps.length - filterExpiredApps(apps, 'work').length;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
     <h1 style="font-size:18px;font-weight:700;color:#111827">⏰ 働き方改革推進支援助成金 — 全件
       <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
       ${hidden ? `<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>` : ''}
@@ -3296,6 +3718,8 @@
       ${addBtn('showFormWork()', '新規登録')}
     </div>
   </div>
+  ${renderSubsidySearchBar('work', query, '🔍 会社名で絞り込み...')}
+  ${query ? `<p style="font-size:13px;color:#6b7280;margin-bottom:12px">「${query}」の検索結果: ${filtered.length} 件</p>` : ''}
   ${renderProgramLimitsBox('work')}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>成果目標</th>
@@ -3304,12 +3728,13 @@
   </table></div></div>`;
     }
 
-    function renderAllDual(apps, companies) {
+    function renderAllDual(apps, companies, query = '') {
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
-      const filtered = filterExpiredApps(apps, 'dual');
+      let filtered = filterExpiredApps(apps, 'dual');
+      if (query) filtered = filterSubsidyBySearch(filtered, companies, query, 'dual');
       const rows = filtered.map(app => {
         const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
       <td style="font-size:12px;white-space:nowrap">${app.support_course}</td>
@@ -3319,8 +3744,8 @@
       <td><button class="btn-edit edit-only" onclick='showFormDual(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
-      const hidden = apps.length - filtered.length;
-      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      const hidden = apps.length - filterExpiredApps(apps, 'dual').length;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
     <h1 style="font-size:18px;font-weight:700;color:#111827">👶 両立支援等助成金 — 全件
       <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
       ${hidden ? `<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>` : ''}
@@ -3330,6 +3755,8 @@
       ${addBtn('showFormDual()', '新規登録')}
     </div>
   </div>
+  ${renderSubsidySearchBar('dual', query, '🔍 会社名・従業員名で絞り込み...')}
+  ${query ? `<p style="font-size:13px;color:#6b7280;margin-bottom:12px">「${query}」の検索結果: ${filtered.length} 件</p>` : ''}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>分類</th><th>コース</th><th>対象者</th>
     ${statusDateHeaderCells('dual')}<th>状況</th><th></th></tr></thead>
@@ -3337,12 +3764,13 @@
   </table></div></div>`;
     }
 
-    function renderAllReskill(apps, companies) {
+    function renderAllReskill(apps, companies, query = '') {
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
-      const filtered = filterExpiredApps(apps, 'reskill');
+      let filtered = filterExpiredApps(apps, 'reskill');
+      if (query) filtered = filterSubsidyBySearch(filtered, companies, query, 'reskill');
       const rows = filtered.map(app => {
         const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td style="font-weight:500">${app.training_name}</td>
       <td style="font-size:12px">${app.training_category || '—'}</td>
@@ -3352,8 +3780,8 @@
       <td><button class="btn-edit edit-only" onclick='showFormReskill(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
-      const hidden = apps.length - filtered.length;
-      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      const hidden = apps.length - filterExpiredApps(apps, 'reskill').length;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
     <h1 style="font-size:18px;font-weight:700;color:#111827">📚 リスキリング支援 — 全件
       <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
       ${hidden ? `<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>` : ''}
@@ -3363,6 +3791,8 @@
       ${addBtn('showFormReskill()', '新規登録')}
     </div>
   </div>
+  ${renderSubsidySearchBar('reskill', query, '🔍 会社名・訓練名称で絞り込み...')}
+  ${query ? `<p style="font-size:13px;color:#6b7280;margin-bottom:12px">「${query}」の検索結果: ${filtered.length} 件</p>` : ''}
   ${renderProgramLimitsBox('reskill')}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>訓練名称</th><th>区分</th><th>人数</th>
@@ -3371,12 +3801,13 @@
   </table></div></div>`;
     }
 
-    function renderAllOver65(apps, companies) {
+    function renderAllOver65(apps, companies, query = '') {
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
-      const filtered = filterExpiredApps(apps, 'over65');
+      let filtered = filterExpiredApps(apps, 'over65');
+      if (query) filtered = filterSubsidyBySearch(filtered, companies, query, 'over65');
       const rows = filtered.map(app => {
         const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        return `<tr>
+        return `<tr data-app-id="${app.id}">
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
       <td style="font-weight:500">${app.target_name}</td>
@@ -3386,8 +3817,8 @@
       <td><button class="btn-edit edit-only" onclick='showFormOver65(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
-      const hidden = apps.length - filtered.length;
-      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      const hidden = apps.length - filterExpiredApps(apps, 'over65').length;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
     <h1 style="font-size:18px;font-weight:700;color:#111827">👴 65歳超雇用推進助成金 — 全件
       <span style="font-size:13px;color:#9ca3af;font-weight:400">${filtered.length}件</span>
       ${hidden ? `<span style="font-size:12px;color:#9ca3af;font-weight:400">（${hidden}件非表示）</span>` : ''}
@@ -3397,6 +3828,8 @@
       ${addBtn('showFormOver65()', '新規登録')}
     </div>
   </div>
+  ${renderSubsidySearchBar('over65', query, '🔍 会社名・対象名で絞り込み...')}
+  ${query ? `<p style="font-size:13px;color:#6b7280;margin-bottom:12px">「${query}」の検索結果: ${filtered.length} 件</p>` : ''}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>コース</th><th>対象・施策名</th><th>措置内容</th>
     ${statusDateHeaderCells('over65')}<th>状況</th><th></th></tr></thead>
@@ -3407,6 +3840,65 @@
     // ================================================================
     //  検索
     // ================================================================
+    function normalizeSearchText(s) {
+      return (s || '').replace(/[\s\u3000\u00a0]+/g, '');
+    }
+    function includesNormalized(haystack, needle) {
+      if (!needle) return true;
+      const n = normalizeSearchText(needle);
+      if (!n) return true;
+      return normalizeSearchText(haystack).includes(n);
+    }
+    function hashPath(hash) { return (hash || '').split('?')[0] || '#dashboard'; }
+    function hashQuery(hash) {
+      if (!hash || !hash.includes('?')) return '';
+      return decodeURIComponent(new URLSearchParams(hash.split('?')[1]).get('q') || '');
+    }
+    function parseCompanyRoute(hash) {
+      if (!hash?.startsWith('#company/')) return null;
+      const withoutHash = hash.slice(1);
+      const [pathPart, queryPart] = withoutHash.split('?');
+      const segments = pathPart.split('/').filter(Boolean);
+      if (segments[0] !== 'company' || !segments[1]) return null;
+      const params = new URLSearchParams(queryPart || '');
+      return {
+        id: segments[1],
+        tab: segments[2] === 'status' ? 'status' : 'history',
+        section: params.get('section'),
+        appId: params.get('app'),
+      };
+    }
+    function buildCaseDeepLink(companyId, sectionType, appId) {
+      const base = defaultAppBaseUrl();
+      const q = new URLSearchParams({ section: sectionType, app: appId });
+      return `${base}#company/${companyId}/status?${q.toString()}`;
+    }
+    function filterSubsidyBySearch(apps, companies, query, type) {
+      if (!query) return apps;
+      const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
+      return apps.filter(app => {
+        const texts = [coMap[app.company_id]?.name || ''];
+        if (type === 'career_up' || type === 'dual') texts.push(app.employee_name || '');
+        else if (type === 'reskill') texts.push(app.training_name || '');
+        else if (type === 'over65') texts.push(app.target_name || '');
+        return texts.some(t => includesNormalized(t, query));
+      });
+    }
+    function renderSubsidySearchBar(route, query, placeholder) {
+      const escQ = (query || '').replace(/"/g, '&quot;');
+      return `<div style="display:flex;gap:8px;margin-bottom:12px">
+      <input id="subsidy-search-input" type="text" placeholder="${placeholder}" value="${escQ}"
+        style="flex:1;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:13px"
+        onkeydown="if(event.key==='Enter')doSubsidySearch('${route}')">
+      <button onclick="doSubsidySearch('${route}')" style="padding:8px 16px;background:#2563eb;color:white;border-radius:8px;font-size:13px;cursor:pointer;border:none">検索</button>
+      ${query ? `<button onclick="clearSubsidySearch('${route}')" style="padding:8px 12px;background:#f3f4f6;color:#374151;border-radius:8px;font-size:13px;cursor:pointer;border:none">クリア</button>` : ''}
+    </div>`;
+    }
+    function doSubsidySearch(route) {
+      const q = (document.getElementById('subsidy-search-input')?.value || '').trim();
+      location.hash = q ? `#${route}?q=${encodeURIComponent(q)}` : `#${route}`;
+    }
+    function clearSubsidySearch(route) { location.hash = `#${route}`; }
     function doSearch() { const q = (document.getElementById('search-input')?.value || '').trim(); location.hash = q ? `#companies?q=${encodeURIComponent(q)}` : '#companies'; }
     function clearSearch() { location.hash = '#companies'; }
 
@@ -3424,17 +3916,19 @@
 
     async function router() {
       const hash = location.hash || '#dashboard';
+      const path = hashPath(hash);
+      const subsidyQ = hashQuery(hash);
       const content = document.getElementById('content');
 
       document.querySelectorAll('.nav-tab').forEach(tab => {
         const href = tab.getAttribute('href');
         tab.classList.toggle('active',
-          (hash === '#dashboard' && href === '#dashboard') || (hash.startsWith('#companies') && href === '#companies') ||
-          (hash === '#career-up' && href === '#career-up') || (hash === '#biz' && href === '#biz') ||
-          (hash === '#work' && href === '#work') || (hash === '#dual' && href === '#dual') ||
-          (hash === '#reskill' && href === '#reskill') ||
-          (hash === '#over65' && href === '#over65') ||
-          (hash.startsWith('#company/') && href === '#companies')
+          (path === '#dashboard' && href === '#dashboard') || (path.startsWith('#companies') && href === '#companies') ||
+          (path === '#career-up' && href === '#career-up') || (path === '#biz' && href === '#biz') ||
+          (path === '#work' && href === '#work') || (path === '#dual' && href === '#dual') ||
+          (path === '#reskill' && href === '#reskill') ||
+          (path === '#over65' && href === '#over65') ||
+          (path.startsWith('#company/') && href === '#companies')
         );
       });
 
@@ -3442,26 +3936,27 @@
       try {
         await loadProgramDeadlines();
         if (hash.startsWith('#company/')) {
-          const parts = decodeURIComponent(hash.slice('#company/'.length)).split('/');
-          const id = parts[0];
-          const tab = parts[1] === 'status' ? 'status' : 'history';
+          const coRoute = parseCompanyRoute(hash);
+          const id = coRoute?.id || decodeURIComponent(hash.slice('#company/'.length).split(/[/?]/)[0]);
+          const tab = coRoute?.tab || (hash.includes('/status') ? 'status' : 'history');
           const det = await fetchCompanyDetail(id);
           if (!cache) { cache = await fetchAll(); }
           content.innerHTML = renderCompanyDetail(det, tab);
+          if (coRoute?.section) {
+            setTimeout(() => scrollToCompanyRecord(id, coRoute.section, coRoute.appId || null), 300);
+          }
           return;
         }
         const data = await getData();
-        if (hash.startsWith('#companies')) {
-          const qs = hash.includes('?') ? hash.split('?')[1] : '';
-          const q = qs ? decodeURIComponent(new URLSearchParams(qs).get('q') || '') : '';
-          content.innerHTML = renderViewModeBanner() + renderCompanies(data, q); return;
+        if (path.startsWith('#companies')) {
+          content.innerHTML = renderViewModeBanner() + renderCompanies(data, subsidyQ); return;
         }
-        if (hash === '#career-up') { content.innerHTML = renderViewModeBanner() + renderAllCareerUp(data.careerUp, data.companies); return; }
-        if (hash === '#biz') { content.innerHTML = renderViewModeBanner() + renderAllBiz(data.biz, data.companies); return; }
-        if (hash === '#work') { content.innerHTML = renderViewModeBanner() + renderAllWork(data.work, data.companies); return; }
-        if (hash === '#dual') { content.innerHTML = renderViewModeBanner() + renderAllDual(data.dual, data.companies); return; }
-        if (hash === '#reskill') { content.innerHTML = renderViewModeBanner() + renderAllReskill(data.reskill, data.companies); return; }
-        if (hash === '#over65') { content.innerHTML = renderViewModeBanner() + renderAllOver65(data.over65, data.companies); return; }
+        if (path === '#career-up') { content.innerHTML = renderViewModeBanner() + renderAllCareerUp(data.careerUp, data.companies, subsidyQ); return; }
+        if (path === '#biz') { content.innerHTML = renderViewModeBanner() + renderAllBiz(data.biz, data.companies, subsidyQ); return; }
+        if (path === '#work') { content.innerHTML = renderViewModeBanner() + renderAllWork(data.work, data.companies, subsidyQ); return; }
+        if (path === '#dual') { content.innerHTML = renderViewModeBanner() + renderAllDual(data.dual, data.companies, subsidyQ); return; }
+        if (path === '#reskill') { content.innerHTML = renderViewModeBanner() + renderAllReskill(data.reskill, data.companies, subsidyQ); return; }
+        if (path === '#over65') { content.innerHTML = renderViewModeBanner() + renderAllOver65(data.over65, data.companies, subsidyQ); return; }
         content.innerHTML = renderViewModeBanner() + renderDashboard(data);
       } catch (err) {
         content.innerHTML = `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:18px;color:#991b1b">

@@ -1,0 +1,7 @@
+# Supabase プロジェクト設定（CLI デプロイ用）
+# プロジェクト: https://supabase.com/dashboard/project/zffoaelhfskphgihbsll
+
+project_id = "zffoaelhfskphgihbsll"
+
+[functions.slack-deadline-notify]
+verify_jwt = false

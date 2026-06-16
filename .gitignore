@@ -1,0 +1,8 @@
+# Supabase CLI（scripts/deploy-slack-function.ps1 が自動ダウンロード）
+.tools/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
