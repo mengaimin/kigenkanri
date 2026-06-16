@@ -372,6 +372,33 @@
       color: #1e40af;
     }
 
+    /* 会社詳細：ヘッダー・タブ固定＋下のみスクロール */
+    .company-detail-page {
+      display: flex;
+      flex-direction: column;
+      height: calc(100dvh - 48px - 2.5rem);
+      min-height: 320px;
+    }
+
+    .company-detail-fixed {
+      flex-shrink: 0;
+    }
+
+    .company-detail-fixed .tab-bar {
+      margin-bottom: 0;
+      background: #f9fafb;
+    }
+
+    .company-detail-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-top: 16px;
+      padding-bottom: 8px;
+      -webkit-overflow-scrolling: touch;
+    }
+
     /* Timeline */
     .tl-year {
       text-align: center;
@@ -767,7 +794,8 @@
     <a class="nav-tab" href="#dual">👶 両立支援</a>
     <a class="nav-tab" href="#reskill">📚 リスキリング</a>
     <a class="nav-tab" href="#over65">👴 65歳超</a>
-    <button type="button" id="nav-operator-btn" class="nav-help-btn" onclick="showOperatorLogin()" style="margin-left:auto;margin-right:8px">👤 ログイン</button>
+    <button type="button" id="nav-operator-btn" class="nav-help-btn" onclick="showOperatorLogin()"
+      style="margin-left:auto;margin-right:8px">👤 ログイン</button>
     <button type="button" class="nav-help-btn" onclick="showHelpGuide()">❓ 使い方</button>
   </nav>
 
@@ -804,6 +832,17 @@
     function setHideExpired(v) { localStorage.setItem(HIDE_EXPIRED_KEY, v ? 'true' : 'false'); }
     function toggleHideExpired() { setHideExpired(!getHideExpired()); router(); }
     function isExpiredDeadline(days) { return days !== null && days !== undefined && days < 0; }
+    function isStaleExpired(days) { return days !== null && days !== undefined && days < -7; }
+    function sortDeadlineItems(items) {
+      return items.sort((a, b) => {
+        const da = a.days ?? 99999;
+        const db = b.days ?? 99999;
+        const aStale = isStaleExpired(a.days);
+        const bStale = isStaleExpired(b.days);
+        if (aStale !== bStale) return aStale ? 1 : -1;
+        return da - db;
+      });
+    }
     function hideExpiredToggle(extraStyle = '') {
       const on = getHideExpired();
       return `<label style="display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#374151;cursor:pointer;user-select:none;${extraStyle}">
@@ -816,6 +855,7 @@
     const OPERATOR_KEY = 'kikan_operator';
     const OPERATOR_LOGIN_KEY = 'kikan_operator_login_id';
     const OPERATOR_ROLE_KEY = 'kikan_operator_role';
+    let cachedStaffAdminPw = '';
     function getOperator() { return sessionStorage.getItem(OPERATOR_KEY) || ''; }
     function getOperatorLoginId() { return sessionStorage.getItem(OPERATOR_LOGIN_KEY) || ''; }
     function isAdmin() { return sessionStorage.getItem(OPERATOR_ROLE_KEY) === 'admin'; }
@@ -845,7 +885,7 @@
       if (!btn) return;
       const op = getOperator();
       btn.textContent = op ? `👤 ${op}` : '👤 ログイン';
-      btn.title = op ? (isAdmin() ? 'ログアウト / アカウント管理' : 'ログアウト') : 'IDとパスワードでログイン';
+      btn.title = op ? (isAdmin() ? 'ログアウト / アカウント管理' : 'ログアウト / パスワード変更') : 'IDとパスワードでログイン';
     }
     function requireOperator() {
       if (getOperator()) return true;
@@ -857,6 +897,9 @@
       const adminBtn = isAdmin()
         ? `<button type="button" onclick="showStaffAccountMgmt()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">👥 アカウント管理</button>`
         : '';
+      const pwBtn = getOperator() && !isAdmin()
+        ? `<button type="button" onclick="showChangeOwnPassword()" style="background:#0ea5e9;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">🔑 パスワード変更</button>`
+        : '';
       openModal('👤 ログイン', `
     <form onsubmit="submitOperatorLogin(event)">
       ${getOperator() ? `<p style="font-size:12px;color:#374151;margin:0 0 12px">ログイン中: <strong>${getOperator()}</strong>${isAdmin() ? ' <span style="color:#7c3aed">(管理者)</span>' : ''}</p>` : ''}
@@ -864,11 +907,81 @@
       ${fRow('パスワード', fInput('password', '', 'password', 'autocomplete="current-password"'), getOperator() ? '別アカウントでログインする場合' : '初回: admin / Admin1234', !getOperator())}
       <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
         ${getOperator() ? `<button type="button" onclick="logoutOperator()" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">ログアウト</button>` : ''}
+        ${pwBtn}
         ${adminBtn}
         ${getOperator() ? '' : '<button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-weight:500">ログイン</button>'}
         ${getOperator() ? '<button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-weight:500">切替ログイン</button>' : ''}
       </div>
     </form>`);
+    }
+    function showChangeOwnPassword() {
+      if (!getOperator()) { toast('ログインしてください', 'error'); showOperatorLogin(); return; }
+      openModal('🔑 パスワード変更', `
+    <p style="font-size:12px;color:#6b7280;margin:0 0 14px">ログイン中: <strong>${getOperator()}</strong>（${getOperatorLoginId()}）</p>
+    <form onsubmit="submitChangeOwnPassword(event)">
+      ${fRow('現在のパスワード', fInput('current_password', '', 'password', 'autocomplete="current-password"'), '', true)}
+      ${fRow('新しいパスワード', fInput('new_password', '', 'password', 'autocomplete="new-password"'), '8文字以上', true)}
+      ${fRow('新しいパスワード（確認）', fInput('new_password_confirm', '', 'password', 'autocomplete="new-password"'), '', true)}
+      <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" onclick="closeModal()" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">キャンセル</button>
+        <button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-weight:500">変更する</button>
+      </div>
+    </form>`);
+    }
+    async function submitChangeOwnPassword(e) {
+      e.preventDefault();
+      if (!getOperator()) return;
+      const fd = new FormData(e.target);
+      const current = fd.get('current_password') || '';
+      const next = fd.get('new_password') || '';
+      const confirm = fd.get('new_password_confirm') || '';
+      if (!current || !next) { toast('すべての項目を入力してください', 'error'); return; }
+      if (next !== confirm) { toast('新しいパスワードが一致しません', 'error'); return; }
+      if (next.length < 8) { toast('新しいパスワードは8文字以上にしてください', 'error'); return; }
+      const { error } = await db.rpc('staff_change_own_password', {
+        p_login_id: getOperatorLoginId(),
+        p_current_password: current,
+        p_new_password: next,
+      });
+      if (error) {
+        toast(error.message.includes('staff_change_own_password') ? 'パスワード変更機能未設定です。SQLを実行してください' : errMsg(error), 'error');
+        return;
+      }
+      closeModal(); toast('パスワードを変更しました');
+    }
+    function showAdminResetPassword(loginId, name) {
+      if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
+      openModal(`🔑 ${name || loginId} のパスワード変更`, `
+    <p style="font-size:12px;color:#6b7280;margin:0 0 14px">管理者権限で変更します（相手の現在のパスワードは不要です）。</p>
+    <form onsubmit="submitAdminResetPassword(event, '${loginId}')">
+      ${fRow('新しいパスワード', fInput('new_password', '', 'password', 'autocomplete="new-password"'), '8文字以上', true)}
+      ${fRow('新しいパスワード（確認）', fInput('new_password_confirm', '', 'password', 'autocomplete="new-password"'), '', true)}
+      ${fRow('管理者パスワード', fInput('admin_password', getAdminPasswordInput(), 'password', 'autocomplete="current-password"'), '本人（管理者）確認', true)}
+      <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" onclick="showStaffAccountMgmt()" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">戻る</button>
+        <button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-weight:500">変更する</button>
+      </div>
+    </form>`);
+    }
+    async function submitAdminResetPassword(e, loginId) {
+      e.preventDefault();
+      if (!isAdmin()) return;
+      const fd = new FormData(e.target);
+      const next = fd.get('new_password') || '';
+      const confirm = fd.get('new_password_confirm') || '';
+      const adminPw = fd.get('admin_password') || '';
+      if (!next || !adminPw) { toast('すべての項目を入力してください', 'error'); return; }
+      if (next !== confirm) { toast('新しいパスワードが一致しません', 'error'); return; }
+      if (next.length < 8) { toast('新しいパスワードは8文字以上にしてください', 'error'); return; }
+      const { error } = await db.rpc('staff_admin_reset_password', {
+        p_admin_login_id: getOperatorLoginId(),
+        p_admin_password: adminPw,
+        p_target_login_id: loginId,
+        p_new_password: next,
+      });
+      if (error) { toast(errMsg(error), 'error'); return; }
+      toast(`「${loginId}」のパスワードを変更しました`);
+      showStaffAccountMgmt();
     }
     async function submitOperatorLogin(e) {
       e.preventDefault();
@@ -886,22 +999,28 @@
       setOperatorSession({ name: u.name, loginId: u.login_id, role: u.role });
       closeModal(); toast(`${u.name} でログインしました`); cache = null; router();
     }
-    function logoutOperator() { setOperatorSession({}); closeModal(); toast('ログアウトしました'); cache = null; router(); }
+    function logoutOperator() { cachedStaffAdminPw = ''; setOperatorSession({}); closeModal(); toast('ログアウトしました'); cache = null; router(); }
 
     async function showStaffAccountMgmt() {
       if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
       openModal('👥 アカウント管理', `
-    <p style="font-size:12px;color:#6b7280;margin:0 0 14px">管理者パスワードで認証して、アカウントの一覧・作成・削除ができます。</p>
-    <form onsubmit="submitStaffCreate(event)" style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb">
+    <p style="font-size:12px;color:#6b7280;margin:0 0 14px">管理者パスワードで認証して、アカウントの一覧・作成・削除・パスワード変更ができます。</p>
+    <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden" aria-hidden="true">
+      <input type="text" tabindex="-1" autocomplete="username">
+      <input type="password" tabindex="-1" autocomplete="current-password">
+    </div>
+    <div style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb">
       <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px">管理者認証</div>
-      ${fRow('管理者パスワード', fInput('admin_password', '', 'password', 'id="staff-admin-pw" autocomplete="current-password"'), '操作のたびに必要', true)}
-      <div style="font-size:13px;font-weight:600;color:#374151;margin:14px 0 10px">新規アカウント</div>
+      ${fRow('管理者パスワード', fInput('admin_password', cachedStaffAdminPw, 'password', 'id="staff-admin-pw" autocomplete="current-password"'), '入力すると一覧を自動表示', true)}
+    </div>
+    <form id="staff-create-form" onsubmit="submitStaffCreate(event)" autocomplete="off" style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb">
+      <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px">新規アカウント</div>
       <div class="form-grid">
-        ${fRow('表示名', fInput('name', '', 'text'), '例：田中', true)}
-        ${fRow('ログインID', fInput('new_login_id', '', 'text'), '3文字以上・英数字', true)}
+        ${fRow('表示名', fInput('create_staff_name', '', 'text', 'id="staff-new-name" autocomplete="off"'), '例：田中', true)}
+        ${fRow('ログインID', fInput('create_staff_uid', '', 'text', 'id="staff-new-login-id" autocomplete="off" autocapitalize="off" spellcheck="false" readonly onfocus="this.removeAttribute(\'readonly\')"'), '3文字以上・英数字', true)}
       </div>
-      ${fRow('パスワード', fInput('new_password', '', 'password'), '8文字以上', true)}
-      ${fRow('権限', fSelect('new_role', [['staff', '一般'], ['admin', '管理者']], 'staff'), '管理者も作成できます')}
+      ${fRow('パスワード', fInput('create_staff_password', '', 'password', 'id="staff-new-password" autocomplete="new-password"'), '8文字以上', true)}
+      ${fRow('権限', fSelect('create_staff_role', [['staff', '一般'], ['admin', '管理者']], 'staff'), '管理者も作成できます')}
       <div style="text-align:right;margin-top:12px">
         <button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-weight:500">＋ アカウント作成</button>
       </div>
@@ -910,17 +1029,57 @@
       <div style="font-size:13px;font-weight:600;color:#374151">登録アカウント</div>
       <button type="button" onclick="refreshStaffList()" style="background:#f3f4f6;border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">🔄 更新</button>
     </div>
-    <div id="staff-list-wrap"><div style="color:#9ca3af;font-size:12px;padding:12px">管理者パスワードを入力して「更新」を押してください</div></div>
+    <div id="staff-list-wrap"><div style="color:#9ca3af;font-size:12px;padding:12px">管理者パスワードを入力すると一覧が表示されます</div></div>
     <div style="text-align:right;margin-top:16px">
       <button type="button" onclick="closeModal()" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer">閉じる</button>
     </div>`, { wide: true });
+      bindStaffAdminPwAutoRefresh();
+      bindStaffCreateAntiAutofill();
+      if (cachedStaffAdminPw) await refreshStaffList({ silent: true });
+    }
+    function bindStaffCreateAntiAutofill() {
+      const loginEl = document.getElementById('staff-new-login-id');
+      if (!loginEl) return;
+      const myId = getOperatorLoginId();
+      const clearIfAutofilled = () => {
+        if (loginEl.value && myId && loginEl.value.toLowerCase() === myId.toLowerCase()) loginEl.value = '';
+      };
+      loginEl.value = '';
+      loginEl.setAttribute('readonly', 'readonly');
+      loginEl.addEventListener('mousedown', () => loginEl.removeAttribute('readonly'));
+      loginEl.addEventListener('focus', () => loginEl.removeAttribute('readonly'));
+      clearIfAutofilled();
+      [50, 150, 400, 800].forEach(ms => setTimeout(clearIfAutofilled, ms));
+    }
+    function bindStaffAdminPwAutoRefresh() {
+      const el = document.getElementById('staff-admin-pw');
+      if (!el || el.dataset.bound) return;
+      el.dataset.bound = '1';
+      let timer;
+      el.addEventListener('input', () => {
+        cachedStaffAdminPw = el.value;
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (el.value) refreshStaffList({ silent: true });
+          else {
+            const wrap = document.getElementById('staff-list-wrap');
+            if (wrap) wrap.innerHTML = '<div style="color:#9ca3af;font-size:12px;padding:12px">管理者パスワードを入力すると一覧が表示されます</div>';
+          }
+        }, 400);
+      });
     }
     function getAdminPasswordInput() {
-      return document.getElementById('staff-admin-pw')?.value || document.querySelector('[name="admin_password"]')?.value || '';
+      const v = document.getElementById('staff-admin-pw')?.value || document.querySelector('[name="admin_password"]')?.value || '';
+      if (v) cachedStaffAdminPw = v;
+      return v || cachedStaffAdminPw;
     }
-    async function refreshStaffList() {
+    async function refreshStaffList(opts = {}) {
+      const silent = !!opts.silent;
       const pw = getAdminPasswordInput();
-      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
+      if (!pw) {
+        if (!silent) toast('管理者パスワードを入力してください', 'error');
+        return;
+      }
       const wrap = document.getElementById('staff-list-wrap');
       if (wrap) wrap.innerHTML = '<div style="color:#9ca3af;font-size:12px;padding:12px">読み込み中...</div>';
       const { data, error } = await db.rpc('staff_list_accounts', {
@@ -928,20 +1087,23 @@
       });
       if (error) {
         if (wrap) wrap.innerHTML = `<div style="color:#dc2626;font-size:12px;padding:12px">${errMsg(error)}</div>`;
+        if (!silent) toast(errMsg(error), 'error');
         return;
       }
+      cachedStaffAdminPw = pw;
       const rows = (data || []).map(s => {
         const isPrimary = s.login_id === 'admin';
         const roleBtn = isPrimary ? '—' : s.role === 'admin'
           ? `<button type="button" onclick="setStaffRole('${s.login_id}','staff')" style="background:#f3f4f6;color:#374151;border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;margin-right:4px">一般に</button>`
           : `<button type="button" onclick="setStaffRole('${s.login_id}','admin')" style="background:#ede9fe;color:#5b21b6;border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;margin-right:4px">管理者に</button>`;
+        const pwBtn = `<button type="button" onclick="showAdminResetPassword('${s.login_id}','${(s.name || '').replace(/'/g, "\\'")}')" style="background:#e0f2fe;color:#0369a1;border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;margin-right:4px">PW変更</button>`;
         const delBtn = isPrimary ? '' : `<button type="button" onclick="deleteStaffAccount('${s.login_id}')" style="background:#fee2e2;color:#991b1b;border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">削除</button>`;
         return `<tr>
         <td style="font-weight:500">${s.name}</td>
         <td style="font-family:monospace;font-size:12px">${s.login_id}</td>
         <td>${s.role === 'admin' ? '<span style="color:#7c3aed;font-weight:600">管理者</span>' : '一般'}</td>
         <td style="font-size:11px;color:#9ca3af">${new Date(s.created_at).toLocaleDateString('ja-JP')}</td>
-        <td style="white-space:nowrap">${roleBtn}${delBtn || (isPrimary ? '—' : '')}</td>
+        <td style="white-space:nowrap">${pwBtn}${roleBtn}${delBtn || (isPrimary ? '' : '')}</td>
       </tr>`;
       }).join('');
       if (wrap) wrap.innerHTML = `<div style="overflow-x:auto"><table class="help-table" style="width:100%">
@@ -953,10 +1115,10 @@
       e.preventDefault();
       if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
       const fd = new FormData(e.target);
-      const adminPw = fd.get('admin_password') || '';
-      const name = fd.get('name')?.trim();
-      const newLoginId = fd.get('new_login_id')?.trim();
-      const newPassword = fd.get('new_password') || '';
+      const adminPw = getAdminPasswordInput();
+      const name = (fd.get('create_staff_name') || document.getElementById('staff-new-name')?.value || '').trim();
+      const newLoginId = (fd.get('create_staff_uid') || document.getElementById('staff-new-login-id')?.value || '').trim();
+      const newPassword = fd.get('create_staff_password') || document.getElementById('staff-new-password')?.value || '';
       if (!adminPw || !name || !newLoginId || !newPassword) {
         toast('すべての項目を入力してください', 'error'); return;
       }
@@ -966,14 +1128,14 @@
         p_name: name,
         p_new_login_id: newLoginId,
         p_new_password: newPassword,
-        p_role: fd.get('new_role') || 'staff',
+        p_role: fd.get('create_staff_role') || 'staff',
       });
       if (error) { toast(errMsg(error), 'error'); return; }
-      const roleLabel = (fd.get('new_role') || 'staff') === 'admin' ? '管理者' : '一般';
+      const roleLabel = (fd.get('create_staff_role') || 'staff') === 'admin' ? '管理者' : '一般';
       toast(`アカウント「${newLoginId}」（${roleLabel}）を作成しました`);
-      e.target.querySelector('[name="name"]').value = '';
-      e.target.querySelector('[name="new_login_id"]').value = '';
-      e.target.querySelector('[name="new_password"]').value = '';
+      document.getElementById('staff-new-name').value = '';
+      document.getElementById('staff-new-login-id').value = '';
+      document.getElementById('staff-new-password').value = '';
       await refreshStaffList();
     }
     async function setStaffRole(loginId, role) {
@@ -1080,11 +1242,13 @@
     // --- 機能 3: 今週の期限 ---
     function renderWeeklyPanel(data) {
       let items = buildDeadlineItems(data);
+      // 7日以内の期限 + 期限切れから7日以内のみ（1週間以上超過は除外）
+      items = items.filter(i => i.days !== null && i.days >= -7 && i.days <= 7);
       if (getHideExpired()) items = items.filter(i => !isExpiredDeadline(i.days));
-      items = items.filter(i => i.days !== null && i.days <= 7).sort((a, b) => (a.days ?? 0) - (b.days ?? 0));
+      items = items.sort((a, b) => (a.days ?? 0) - (b.days ?? 0));
       if (!items.length) {
         return `<div class="card" style="margin-bottom:16px;padding:14px 16px;background:#f0fdf4;border-color:#bbf7d0">
-      <div style="font-size:13px;font-weight:600;color:#166534">📅 今週の期限（7日以内・期限切れ）</div>
+      <div style="font-size:13px;font-weight:600;color:#166534">📅 今週の期限（7日以内・超過1週間以内）</div>
       <div style="font-size:12px;color:#15803d;margin-top:6px">該当案件はありません 🎉</div>
     </div>`;
       }
@@ -1094,11 +1258,11 @@
     <td style="font-size:12px">${it.target || '—'}</td>
     <td style="font-size:12px;color:#6b7280">${it.kind}</td>
     <td style="font-family:monospace;font-size:12px">${fmt(it.deadline)}</td>
-    <td>${deadlineBadge(it.days)}</td>
+    <td>${deadlineBadge(it.days, it.daysPhase)}</td>
   </tr>`).join('');
       const more = items.length > 15 ? `<div style="font-size:11px;color:#9ca3af;margin-top:8px">他 ${items.length - 15} 件… 下の一覧で確認できます</div>` : '';
       return `<div class="card" style="margin-bottom:16px;border-left:4px solid #f97316">
-    <div style="padding:12px 16px 8px;font-size:13px;font-weight:700;color:#9a3412">📅 今週の期限（7日以内・期限切れ） <span style="font-weight:400;color:#6b7280">${items.length}件</span></div>
+    <div style="padding:12px 16px 8px;font-size:13px;font-weight:700;color:#9a3412">📅 今週の期限（7日以内・超過1週間以内） <span style="font-weight:400;color:#6b7280">${items.length}件</span></div>
     <div style="overflow-x:auto;padding:0 16px 14px"><table style="width:100%;font-size:13px">
       <thead><tr style="color:#6b7280;font-size:11px"><th>助成金</th><th>会社</th><th>対象</th><th>期限種別</th><th>期限日</th><th>残日数</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -1131,13 +1295,35 @@
     function addMonths(d, m) { const r = new Date(d); const day = r.getDate(); r.setMonth(r.getMonth() + m); if (r.getDate() < day) r.setDate(0); return r; }
     function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
     function fmt(d) { if (!d) return '—'; const dt = d instanceof Date ? d : new Date(d); if (isNaN(dt.getTime())) return '—'; return `${dt.getFullYear()}/${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}`; }
+    function dateTd(app, field) {
+      return `<td style="font-family:monospace;font-size:12px">${fmt(parseDate(app[field]))}</td>`;
+    }
+    const STATUS_DATE_COLS = {
+      biz: [['application_date', '交付申請日'], ['decision_date', '交付決定日'], ['completion_date_actual', '事業完了日']],
+      work: [['application_date', '交付申請日'], ['completion_date', '事業完了日']],
+      reskill: [['plan_submit_date', '計画届提出日'], ['training_start_date', '訓練開始日'], ['training_end_date', '訓練終了日'], ['exam_date', '受験日']],
+      dual: [['date1', '関連日1'], ['date2', '起算日'], ['application_date', '支給申請日']],
+      over65: [['plan_cert_date', '計画認定日'], ['implementation_date', '措置実施日'], ['application_date', '支給申請日']],
+    };
+    function statusDateHeaderCells(type) {
+      return (STATUS_DATE_COLS[type] || []).map(([, label]) => `<th>${label}</th>`).join('');
+    }
+    function statusDateRowCells(type, app) {
+      return (STATUS_DATE_COLS[type] || []).map(([field]) => dateTd(app, field)).join('');
+    }
     function toInputDate(d) { if (!d) return ''; const dt = d instanceof Date ? d : new Date(d); if (isNaN(dt.getTime())) return ''; return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`; }
 
     // ================================================================
     //  バッジ
     // ================================================================
-    function deadlineBadge(days) {
+    function deadlineBadge(days, phase) {
       if (days === null || days === undefined) return '<span class="badge badge-blue">✅ 完了</span>';
+      if (phase === 'until_start') {
+        if (days === 0) return '<span class="badge" style="background:#dbeafe;color:#1e40af">📅 本日から申請可</span>';
+        if (days <= 7) return `<span class="badge" style="background:#e0e7ff;color:#3730a3">📅 申請まで${days}日</span>`;
+        if (days <= 30) return `<span class="badge" style="background:#f3f4f6;color:#4b5563">📅 申請まで${days}日</span>`;
+        return `<span class="badge" style="background:#f3f4f6;color:#6b7280">📅 申請まで${days}日</span>`;
+      }
       if (days < 0) return `<span class="badge badge-red">🔴 ${Math.abs(days)}日超過</span>`;
       if (days === 0) return `<span class="badge badge-red">🔴 本日期限</span>`;
       if (days <= 7) return `<span class="badge badge-orange">🟠 あと${days}日</span>`;
@@ -1252,7 +1438,12 @@
       const [sm, sd, lm, ld] = m; const base = parseDate(app.date2) || parseDate(app.date1); if (!base) return {};
       const appStart = addDays(addMonths(base, sm), sd); const deadline = addDays(addMonths(appStart, lm), ld);
       const isDone = ['支給申請済', '承認済'].includes(app.status);
-      return { base, appStart, deadline, days: isDone ? null : daysFromToday(deadline) };
+      if (isDone) return { base, appStart, deadline, days: null, daysPhase: null };
+      const untilStart = daysFromToday(appStart);
+      if (untilStart !== null && untilStart > 0) {
+        return { base, appStart, deadline, days: untilStart, daysPhase: 'until_start' };
+      }
+      return { base, appStart, deadline, days: daysFromToday(deadline), daysPhase: 'until_deadline' };
     }
     function calcReskill(app) {
       const programEnd = getDeadline('reskill', 'program_end');
@@ -1521,12 +1712,12 @@
         <table class="help-table">
           <thead><tr><th>色</th><th>条件</th></tr></thead>
           <tbody>
-            <tr><td style="border-left:4px solid #ef4444;padding-left:12px">赤い線</td><td>その会社に<strong>期限切れ</strong>または<strong>7日以内</strong>の期限が1件以上</td></tr>
+            <tr><td style="border-left:4px solid #ef4444;padding-left:12px">赤い線</td><td>期限超過<strong>7日以内</strong>、または<strong>7日以内</strong>の期限が1件以上（1週間以上前の期限切れは含まない）</td></tr>
             <tr><td style="border-left:4px solid #f97316;padding-left:12px">オレンジ線</td><td>赤条件はないが、<strong>30日以内</strong>の期限が1件以上</td></tr>
             <tr><td>線なし</td><td>30日超の期限のみ、または期限なし</td></tr>
           </tbody>
         </table>
-        <p>カード内の「🔴 期限注意」「🟠 30日以内」バッジも同じ基準です。</p>
+        <p>カード内の「🔴 期限注意」「🟠 30日以内」バッジも同じ基準です（1週間以上前に切れた案件は通知しません）。</p>
       </div>
 
       <div class="help-section">
@@ -1552,20 +1743,20 @@
           <li><strong>👔 キャリアアップ</strong> … 正社員転換日・給与支給日から1回目・2回目申請期限</li>
           <li><strong>🏭 業務改善</strong> … 年度の事業完了期限・事業完了日から30日以内の支給申請期限</li>
           <li><strong>⏰ 働き方改革</strong> … 交付申請・事業完了（年度）・支給申請期限</li>
-          <li><strong>👶 両立支援</strong> … 起算日からコース別に支給申請期限</li>
+          <li><strong>👶 両立支援</strong> … 起算日からコース別に支給申請期限。申請可能日前は<strong>申請まで○日</strong>、以降は<strong>期限まで○日</strong>を表示。</li>
           <li><strong>📚 リスキリング</strong> … 計画届（開始6か月前〜1か月前）・支給申請（終了/受験の2か月以内）</li>
           <li><strong>👴 65歳超</strong> … 措置実施月の翌月から4か月以内（各月1〜15日）の支給申請</li>
         </ul>
-        <div class="help-callout">⚙️ ダッシュボードの「年度期限設定」で、業務改善・働き方改革・リスキリングの<strong>年度制度締切</strong>を更新できます。各助成金ページにも年度締切が表示されます。</div>
+        <div class="help-callout">⚙️ ダッシュボードの「年度期限設定」で、業務改善・働き方改革・リスキリングの<strong>年度制度締切</strong>を更新できます。各助成金ページの<strong>上部</strong>にも年度締切が表示されます。案件一覧の各行には<strong>登録した実績日</strong>を表示します。</div>
       </div>
 
       <div class="help-section">
         <h3>👤 ログイン・担当者・変更履歴・書類</h3>
         <ul>
-          <li><strong>👤 ログイン</strong> … 未ログインは<strong>閲覧のみ</strong>（期限・一覧・会社詳細の確認）。ログイン後は登録・編集・削除・書類チェック・変更履歴の記録が可能です。</li>
-          <li><strong>👥 アカウント管理</strong> … 管理者のみ。アカウント作成時に<strong>一般 / 管理者</strong>を選べます。一覧から権限の変更・削除も可能です（初期 admin は保護）。</li>
+          <li><strong>👤 ログイン</strong> … 未ログインは<strong>閲覧のみ</strong>。ログイン後は登録・編集・削除などが可能。一般アカウントは<strong>🔑 パスワード変更</strong>で自分のPWを変更できます（現在のパスワード必要）。</li>
+          <li><strong>👥 アカウント管理</strong> … 管理者のみ。アカウント作成・権限変更・削除に加え、<strong>全員（自分含む）のパスワードを管理者権限で変更</strong>できます（相手の現在PW不要・管理者PWのみ）。</li>
           <li><strong>社内担当者</strong> … 会社登録・編集で設定。会社一覧・会社詳細に表示されます（取引先側ではなく事務所側の担当）。</li>
-          <li><strong>📅 今週の期限</strong> … ダッシュボード上部。7日以内・期限切れの案件を優先表示します。</li>
+          <li><strong>📅 今週の期限</strong> … ダッシュボード上部。期限まで7日以内、または期限超過から7日以内の案件のみ表示（1週間以上前に切れた案件は含みません）。</li>
           <li><strong>📎 書類チェック</strong> … 会社詳細「申請状況」タブの各行。助成金ごとの必要書類をチェックできます。</li>
           <li><strong>📝 変更履歴</strong> … 会社詳細「履歴タイムライン」タブの下部。誰がいつ何を変更したかを記録します。</li>
         </ul>
@@ -2285,7 +2476,7 @@
       if (!items.length) return `<tr><td colspan="${dashFilter.mode === 'status' ? 8 : 7}" style="text-align:center;color:#9ca3af;padding:24px">データがありません</td></tr>`;
       if (dashFilter.mode === 'status') {
         return items.map(item => {
-          const rowBg = item.days === null ? '' : item.days < 0 ? 'background:#fff5f5' : item.days <= 7 ? 'background:#fff8f0' : item.days <= 30 ? 'background:#fefce8' : '';
+          const rowBg = item.days === null ? '' : item.daysPhase === 'until_start' ? (item.days <= 7 ? 'background:#eff6ff' : '') : item.days < 0 ? 'background:#fff5f5' : item.days <= 7 ? 'background:#fff8f0' : item.days <= 30 ? 'background:#fefce8' : '';
           return `<tr style="${rowBg}">
         <td><span class="stbadge" style="${TYPE_STYLE[item.type]}">${TYPE_LABEL[item.type]}</span></td>
         <td><a class="co-link" href="#company/${item.companyId}">${item.companyName}</a></td>
@@ -2294,19 +2485,19 @@
         <td style="font-size:12px;color:#6b7280">${item.statusRound || '—'}</td>
         <td>${stBadge(item.status)}</td>
         <td style="font-family:monospace;font-size:12px">${fmt(item.deadline)}</td>
-        <td>${deadlineBadge(item.days)}</td>
+        <td>${deadlineBadge(item.days, item.daysPhase)}</td>
       </tr>`;
         }).join('');
       }
       return items.map(item => {
-        const rowBg = item.days === null ? '' : item.days < 0 ? 'background:#fff5f5' : item.days <= 7 ? 'background:#fff8f0' : item.days <= 30 ? 'background:#fefce8' : '';
+        const rowBg = item.days === null ? '' : item.daysPhase === 'until_start' ? (item.days <= 7 ? 'background:#eff6ff' : '') : item.days < 0 ? 'background:#fff5f5' : item.days <= 7 ? 'background:#fff8f0' : item.days <= 30 ? 'background:#fefce8' : '';
         return `<tr style="${rowBg}">
       <td><span class="stbadge" style="${TYPE_STYLE[item.type]}">${TYPE_LABEL[item.type]}</span></td>
       <td><a class="co-link" href="#company/${item.companyId}">${item.companyName}</a></td>
       <td style="color:#6b7280">${item.target || '—'}</td>
       <td style="color:#6b7280;font-size:12px">${item.kind}</td>
       <td style="font-family:monospace;font-size:12px">${fmt(item.deadline)}</td>
-      <td>${deadlineBadge(item.days)}</td>
+      <td>${deadlineBadge(item.days, item.daysPhase)}</td>
       <td>${stBadge(item.status)}</td>
     </tr>`;
       }).join('');
@@ -2355,7 +2546,8 @@
           type: 'dual', companyName: co, companyId: cid, target: app.employee_name,
           detail: app.support_course || app.course_type || '—',
           statusRound: '—', status: app.status || '未申請',
-          deadline: d.deadline, days: d.days,
+          deadline: d.daysPhase === 'until_start' ? d.appStart : d.deadline,
+          days: d.days, daysPhase: d.daysPhase,
         });
       });
       data.reskill.forEach(app => {
@@ -2414,6 +2606,7 @@
     }
     function isDualExpired(app) {
       const d = calcDual(app);
+      if (d.daysPhase === 'until_start') return false;
       return isExpiredDeadline(d.days);
     }
     function isReskillExpired(app) {
@@ -2492,7 +2685,12 @@
       });
       data.dual.forEach(app => {
         const d = calcDual(app); const co = app.company?.name || ''; const cid = app.company_id;
-        if (d.deadline && d.days !== undefined) items.push({ type: 'dual', companyName: co, companyId: cid, target: app.employee_name, kind: `支給申請期限 (${app.support_course})`, deadline: d.deadline, days: d.days, status: app.status });
+        if (d.deadline && d.days !== null && d.days !== undefined) items.push({
+          type: 'dual', companyName: co, companyId: cid, target: app.employee_name,
+          kind: d.daysPhase === 'until_start' ? `申請可能まで (${app.support_course})` : `支給申請期限 (${app.support_course})`,
+          deadline: d.daysPhase === 'until_start' ? d.appStart : d.deadline,
+          days: d.days, daysPhase: d.daysPhase, status: app.status,
+        });
       });
       data.reskill.forEach(app => {
         const d = calcReskill(app); const co = app.company?.name || ''; const cid = app.company_id;
@@ -2504,7 +2702,7 @@
         const d = calcOver65(app); const co = app.company?.name || ''; const cid = app.company_id;
         if (d.deadline && d.days !== null) items.push({ type: 'over65', companyName: co, companyId: cid, target: app.target_name, kind: `支給申請期限（${app.course_type}）`, deadline: d.deadline, days: d.days, status: app.status });
       });
-      return items.sort((a, b) => (a.days ?? 99999) - (b.days ?? 99999));
+      return sortDeadlineItems(items);
     }
 
     function renderDashboard(data) {
@@ -2589,10 +2787,10 @@
       if (getHideExpired()) allItems = allItems.filter(i => !isExpiredDeadline(i.days));
       const urgMap = {};
       allItems.forEach(i => {
+        if (i.days === null || isStaleExpired(i.days)) return;
         if (!urgMap[i.companyId]) urgMap[i.companyId] = { urgent: 0, warning: 0 };
-        if (i.days !== null && i.days < 0) urgMap[i.companyId].urgent++;
-        else if (i.days !== null && i.days <= 7) urgMap[i.companyId].urgent++;
-        else if (i.days !== null && i.days <= 30) urgMap[i.companyId].warning++;
+        if (i.days < 0 || i.days <= 7) urgMap[i.companyId].urgent++;
+        else if (i.days <= 30) urgMap[i.companyId].warning++;
       });
 
       const subDefs = [
@@ -2679,10 +2877,13 @@
 
       const cuCnt = careerUp.length, biCnt = biz.length, wkCnt = work.length, duCnt = dual.length, rsCnt = reskill.length, o65Cnt = over65.length;
       return `
+    <div class="company-detail-page">
+    <div class="company-detail-fixed">
+    ${renderViewModeBanner()}
     <div style="font-size:12px;color:#9ca3af;margin-bottom:10px">
       <a href="#companies" style="color:#2563eb;font-weight:500">← 会社一覧に戻る</a>
     </div>
-    <div class="card" style="padding:16px;margin-bottom:16px">
+    <div class="card" style="padding:16px;margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
         <div style="flex:1;min-width:0">
           <h1 style="font-size:20px;font-weight:700;color:#111827;margin-bottom:4px">${company.name}</h1>
@@ -2706,7 +2907,6 @@
       </div>
     </div>
 
-    <!-- タブ -->
     <div class="tab-bar">
       <button class="tab-btn${showHistory ? ' active' : ''}" onclick="switchDetailTab('history','${cid}')">
         📅 履歴タイムライン <span class="tab-count">${tlCount}</span>
@@ -2715,7 +2915,9 @@
         📋 申請状況 <span class="tab-count">${total}</span>
       </button>
     </div>
+    </div>
 
+    <div class="company-detail-scroll">
     <!-- 履歴タブ -->
     <div id="tab-history" style="display:${showHistory ? 'block' : 'none'}">
       <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
@@ -2736,6 +2938,8 @@
       ${renderReskillSection(reskill, cid)}
       ${renderOver65Section(over65, cid)}
       ${total === 0 ? '<div style="text-align:center;padding:40px;color:#9ca3af">この会社の申請データがありません</div>' : ''}
+    </div>
+    </div>
     </div>`;
     }
 
@@ -2787,15 +2991,12 @@
 
     function renderBizSection(apps, companyId = null) {
       const rows = apps.map(app => {
-        const d = calcBiz(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
+        const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td>${app.wage_course || '—'}</td>
       <td>${app.worker_count || '—'}</td>
       <td style="font-size:12px;color:#4b5563;max-width:160px;overflow:hidden;text-overflow:ellipsis">${app.equipment_description || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.compLimit)}</td>
-      <td>${deadlineBadge(d.compDays)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
-      <td>${deadlineBadge(d.supDays)}</td>
+      ${statusDateRowCells('biz', app)}
       <td>${stBadge(app.status)}</td>
       <td style="white-space:nowrap">${docCheckBtn('biz', app, companyId, app.wage_course || '業務改善')}<button class="btn-edit edit-only" onclick='showFormBiz(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -2804,24 +3005,17 @@
     ${renderProgramLimitsBox('biz')}
     <table><thead><tr>
       <th>コース</th><th>人数</th><th>設備投資</th>
-      <th>事業完了期限</th><th>完了残日数</th>
-      <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th>
+      ${statusDateHeaderCells('biz')}<th>申請状況</th><th></th>
     </tr></thead>
-    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+    <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
     }
 
     function renderWorkSection(apps, companyId = null) {
       const rows = apps.map(app => {
-        const d = calcWork(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
+        const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td style="font-size:12px">${app.goal_type || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.application_date))}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.appLimit)}</td>
-      <td>${d.appDays !== null ? deadlineBadge(d.appDays) : '<span class="badge badge-gray">済</span>'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.compLimit)}</td>
-      <td>${d.compDays !== null ? deadlineBadge(d.compDays) : (parseDate(app.completion_date) ? '<span class="badge badge-gray">済</span>' : '—')}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
-      <td>${deadlineBadge(d.supDays)}</td>
+      ${statusDateRowCells('work', app)}
       <td>${stBadge(app.status)}</td>
       <td style="white-space:nowrap">${docCheckBtn('work', app, companyId, app.goal_type || '働き方改革')}<button class="btn-edit edit-only" onclick='showFormWork(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -2829,25 +3023,20 @@
       return sectionCard('teal', '⏰ 働き方改革推進支援助成金（令和8年度）', `showFormWork('${companyId}')`, `
     ${renderProgramLimitsBox('work')}
     <table><thead><tr>
-      <th>成果目標</th><th>交付申請日</th><th>交付申請期限</th><th>交付残日数</th>
-      <th>事業完了期限</th><th>完了残日数</th>
-      <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th>
+      <th>成果目標</th>${statusDateHeaderCells('work')}<th>申請状況</th><th></th>
     </tr></thead>
-    <tbody>${rows || '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+    <tbody>${rows || '<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
     }
 
     function renderDualSection(apps, companyId = null) {
       const rows = apps.map(app => {
-        const d = calcDual(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
+        const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
       <td style="font-size:12px;white-space:nowrap">${app.support_course}</td>
       <td style="font-weight:500">${app.employee_name}</td>
       <td style="font-size:12px;color:#6b7280">${app.person_in_charge || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.base)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.appStart)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
-      <td>${deadlineBadge(d.days)}</td>
+      ${statusDateRowCells('dual', app)}
       <td>${stBadge(app.status)}</td>
       <td style="white-space:nowrap">${docCheckBtn('dual', app, companyId, app.employee_name)}<button class="btn-edit edit-only" onclick='showFormDual(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -2855,24 +3044,19 @@
       return sectionCard('pink', '👶 両立支援等助成金（6コース）', `showFormDual('${companyId}')`, `
     <table><thead><tr>
       <th>分類</th><th>コース</th><th>対象者</th><th>担当</th>
-      <th>起算日</th><th>申請可能日</th><th>申請期限</th><th>残日数</th><th>状況</th><th></th>
+      ${statusDateHeaderCells('dual')}<th>状況</th><th></th>
     </tr></thead>
-    <tbody>${rows || '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
     }
 
     function renderReskillSection(apps, companyId = null) {
       const rows = apps.map(app => {
-        const d = calcReskill(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        const period = d.start ? `${fmt(d.start)} 〜 ${fmt(d.end)}` : '—';
+        const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td style="font-weight:500">${app.training_name}</td>
       <td style="font-size:12px">${app.training_category || '—'}</td>
       <td style="text-align:center">${app.trainee_count || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.planLimit)}</td>
-      <td>${d.planDays !== null ? deadlineBadge(d.planDays) : (app.plan_submit_date ? '<span class="badge badge-gray">済</span>' : '—')}</td>
-      <td style="font-family:monospace;font-size:11px">${period}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
-      <td>${deadlineBadge(d.supDays)}</td>
+      ${statusDateRowCells('reskill', app)}
       <td>${stBadge(app.status)}</td>
       <td style="white-space:nowrap">${docCheckBtn('reskill', app, companyId, app.training_name)}<button class="btn-edit edit-only" onclick='showFormReskill(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -2881,37 +3065,29 @@
     ${renderProgramLimitsBox('reskill')}
     <table><thead><tr>
       <th>訓練名称</th><th>区分</th><th>人数</th>
-      <th>計画届期限</th><th>計画届残日数</th>
-      <th>訓練期間</th><th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th>
+      ${statusDateHeaderCells('reskill')}<th>申請状況</th><th></th>
     </tr></thead>
-    <tbody>${rows || '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
     }
 
     function renderOver65Section(apps, companyId = null) {
       const rows = apps.map(app => {
-        const d = calcOver65(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
+        const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
       <td style="font-weight:500">${app.target_name}</td>
       <td style="font-size:12px;color:#4b5563;max-width:160px;overflow:hidden;text-overflow:ellipsis">${app.measure_detail || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.planCert)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.impl)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
-      <td>${deadlineBadge(d.days)}</td>
+      ${statusDateRowCells('over65', app)}
       <td>${stBadge(app.status)}</td>
       <td style="white-space:nowrap">${docCheckBtn('over65', app, companyId, app.target_name)}<button class="btn-edit edit-only" onclick='showFormOver65(null,${esc})'>✏️</button></td>
     </tr>`;
       }).join('');
       return sectionCard('gray', '👴 65歳超雇用推進助成金', `showFormOver65('${companyId}')`, `
-    <div style="padding:10px 14px;font-size:11px;color:#64748b;line-height:1.6;border-bottom:1px solid #e2e8f0;background:#f8fafc">
-      支給申請：措置実施日の属する月の<strong>翌月から4か月以内</strong>、各月<strong>1〜15日</strong>（機構支部へ）<br>
-      ①継続雇用促進 ②雇用管理改善 ③無期雇用転換 — 計画申請が必要なコースは先に計画認定
-    </div>
     <table><thead><tr>
       <th>コース</th><th>対象・施策名</th><th>措置内容</th>
-      <th>計画認定日</th><th>措置実施日</th><th>支給申請期限</th><th>残日数</th><th>申請状況</th><th></th>
+      ${statusDateHeaderCells('over65')}<th>申請状況</th><th></th>
     </tr></thead>
-    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
+    <tbody>${rows || '<tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`);
     }
 
     // ================================================================
@@ -2961,14 +3137,11 @@
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
       const filtered = filterExpiredApps(apps, 'biz');
       const rows = filtered.map(app => {
-        const co = coMap[app.company_id]; const d = calcBiz(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
+        const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td>${app.wage_course || '—'}</td><td>${app.worker_count || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.compLimit)}</td>
-      <td>${deadlineBadge(d.compDays)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
-      <td>${deadlineBadge(d.supDays)}</td>
+      ${statusDateRowCells('biz', app)}
       <td>${stBadge(app.status)}</td>
       <td><button class="btn-edit edit-only" onclick='showFormBiz(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -2987,8 +3160,8 @@
   ${renderProgramLimitsBox('biz')}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>コース</th><th>人数</th>
-    <th>事業完了期限</th><th>完了残日数</th><th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+    ${statusDateHeaderCells('biz')}<th>申請状況</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
   </table></div></div>`;
     }
 
@@ -2996,17 +3169,11 @@
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
       const filtered = filterExpiredApps(apps, 'work');
       const rows = filtered.map(app => {
-        const co = coMap[app.company_id]; const d = calcWork(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
+        const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td style="font-size:12px">${app.goal_type || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(parseDate(app.application_date))}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.appLimit)}</td>
-      <td>${d.appDays !== null ? deadlineBadge(d.appDays) : '<span class="badge badge-gray">済</span>'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.compLimit)}</td>
-      <td>${d.compDays !== null ? deadlineBadge(d.compDays) : (parseDate(app.completion_date) ? '<span class="badge badge-gray">済</span>' : '—')}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
-      <td>${deadlineBadge(d.supDays)}</td>
+      ${statusDateRowCells('work', app)}
       <td>${stBadge(app.status)}</td>
       <td><button class="btn-edit edit-only" onclick='showFormWork(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -3024,10 +3191,9 @@
   </div>
   ${renderProgramLimitsBox('work')}
   <div class="card"><div style="overflow-x:auto"><table>
-    <thead><tr><th>会社名</th><th>成果目標</th><th>交付申請日</th>
-    <th>交付申請期限</th><th>交付残日数</th><th>事業完了期限</th><th>完了残日数</th>
-    <th>支給申請期限</th><th>支給残日数</th><th>申請状況</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+    <thead><tr><th>会社名</th><th>成果目標</th>
+    ${statusDateHeaderCells('work')}<th>申請状況</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
   </table></div></div>`;
     }
 
@@ -3035,16 +3201,13 @@
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
       const filtered = filterExpiredApps(apps, 'dual');
       const rows = filtered.map(app => {
-        const co = coMap[app.company_id]; const d = calcDual(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
+        const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
       <td style="font-size:12px;white-space:nowrap">${app.support_course}</td>
       <td style="font-weight:500">${app.employee_name}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.base)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.appStart)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
-      <td>${deadlineBadge(d.days)}</td>
+      ${statusDateRowCells('dual', app)}
       <td>${stBadge(app.status)}</td>
       <td><button class="btn-edit edit-only" onclick='showFormDual(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -3062,8 +3225,8 @@
   </div>
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>分類</th><th>コース</th><th>対象者</th>
-    <th>起算日</th><th>申請可能日</th><th>申請期限</th><th>残日数</th><th>状況</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+    ${statusDateHeaderCells('dual')}<th>状況</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
   </table></div></div>`;
     }
 
@@ -3071,18 +3234,13 @@
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
       const filtered = filterExpiredApps(apps, 'reskill');
       const rows = filtered.map(app => {
-        const co = coMap[app.company_id]; const d = calcReskill(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
-        const period = d.start ? `${fmt(d.start)} 〜 ${fmt(d.end)}` : '—';
+        const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td style="font-weight:500">${app.training_name}</td>
       <td style="font-size:12px">${app.training_category || '—'}</td>
       <td style="text-align:center">${app.trainee_count || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.planLimit)}</td>
-      <td>${d.planDays !== null ? deadlineBadge(d.planDays) : (app.plan_submit_date ? '<span class="badge badge-gray">済</span>' : '—')}</td>
-      <td style="font-family:monospace;font-size:11px">${period}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.supLimit)}</td>
-      <td>${deadlineBadge(d.supDays)}</td>
+      ${statusDateRowCells('reskill', app)}
       <td>${stBadge(app.status)}</td>
       <td><button class="btn-edit edit-only" onclick='showFormReskill(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -3101,8 +3259,8 @@
   ${renderProgramLimitsBox('reskill')}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>訓練名称</th><th>区分</th><th>人数</th>
-    <th>計画届期限</th><th>計画届残日数</th><th>訓練期間</th><th>支給申請期限</th><th>支給残日数</th><th>状況</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+    ${statusDateHeaderCells('reskill')}<th>状況</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
   </table></div></div>`;
     }
 
@@ -3110,16 +3268,13 @@
       const coMap = Object.fromEntries(companies.map(c => [c.id, c]));
       const filtered = filterExpiredApps(apps, 'over65');
       const rows = filtered.map(app => {
-        const co = coMap[app.company_id]; const d = calcOver65(app); const esc = JSON.stringify(app).replace(/"/g, '&quot;');
+        const co = coMap[app.company_id]; const esc = JSON.stringify(app).replace(/"/g, '&quot;');
         return `<tr>
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td><span class="badge badge-gray" style="font-size:10px">${app.course_type}</span></td>
       <td style="font-weight:500">${app.target_name}</td>
       <td style="font-size:12px">${app.measure_detail || '—'}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.planCert)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.impl)}</td>
-      <td style="font-family:monospace;font-size:12px">${fmt(d.deadline)}</td>
-      <td>${deadlineBadge(d.days)}</td>
+      ${statusDateRowCells('over65', app)}
       <td>${stBadge(app.status)}</td>
       <td><button class="btn-edit edit-only" onclick='showFormOver65(null,${esc})'>✏️</button></td>
     </tr>`;
@@ -3135,14 +3290,10 @@
       ${addBtn('showFormOver65()', '新規登録')}
     </div>
   </div>
-  <div class="card" style="margin-bottom:14px;padding:12px 16px;font-size:12px;color:#64748b;line-height:1.7;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
-    <strong>3コース：</strong>①継続雇用促進（定年引上げ等） ②雇用管理改善 ③無期雇用転換<br>
-    支給申請期限＝措置実施月の<strong>翌月から4か月以内</strong>、各月<strong>1〜15日</strong>（高齢・障害・求職者雇用支援機構 支部）
-  </div>
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>コース</th><th>対象・施策名</th><th>措置内容</th>
-    <th>計画認定日</th><th>措置実施日</th><th>支給申請期限</th><th>残日数</th><th>状況</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+    ${statusDateHeaderCells('over65')}<th>状況</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
   </table></div></div>`;
     }
 
@@ -3189,7 +3340,7 @@
           const tab = parts[1] === 'status' ? 'status' : 'history';
           const det = await fetchCompanyDetail(id);
           if (!cache) { cache = await fetchAll(); }
-          content.innerHTML = renderViewModeBanner() + renderCompanyDetail(det, tab);
+          content.innerHTML = renderCompanyDetail(det, tab);
           return;
         }
         const data = await getData();
