@@ -874,7 +874,6 @@
     const OPERATOR_KEY = 'kikan_operator';
     const OPERATOR_LOGIN_KEY = 'kikan_operator_login_id';
     const OPERATOR_ROLE_KEY = 'kikan_operator_role';
-    let cachedStaffAdminPw = '';
     function getOperator() { return sessionStorage.getItem(OPERATOR_KEY) || ''; }
     function getOperatorLoginId() { return sessionStorage.getItem(OPERATOR_LOGIN_KEY) || ''; }
     function isAdmin() { return sessionStorage.getItem(OPERATOR_ROLE_KEY) === 'admin'; }
@@ -974,7 +973,6 @@
     <form onsubmit="submitAdminResetPassword(event, '${loginId}')">
       ${fRow('新しいパスワード', fInput('new_password', '', 'password', 'autocomplete="new-password"'), '8文字以上', true)}
       ${fRow('新しいパスワード（確認）', fInput('new_password_confirm', '', 'password', 'autocomplete="new-password"'), '', true)}
-      ${fRow('管理者パスワード', fInput('admin_password', getAdminPasswordInput(), 'password', 'autocomplete="current-password"'), '本人（管理者）確認', true)}
       <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end">
         <button type="button" onclick="showStaffAccountMgmt()" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 14px;cursor:pointer">戻る</button>
         <button type="submit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-weight:500">変更する</button>
@@ -987,13 +985,11 @@
       const fd = new FormData(e.target);
       const next = fd.get('new_password') || '';
       const confirm = fd.get('new_password_confirm') || '';
-      const adminPw = fd.get('admin_password') || '';
-      if (!next || !adminPw) { toast('すべての項目を入力してください', 'error'); return; }
+      if (!next) { toast('新しいパスワードを入力してください', 'error'); return; }
       if (next !== confirm) { toast('新しいパスワードが一致しません', 'error'); return; }
       if (next.length < 8) { toast('新しいパスワードは8文字以上にしてください', 'error'); return; }
       const { error } = await db.rpc('staff_admin_reset_password', {
         p_admin_login_id: getOperatorLoginId(),
-        p_admin_password: adminPw,
         p_target_login_id: loginId,
         p_new_password: next,
       });
@@ -1017,19 +1013,15 @@
       setOperatorSession({ name: u.name, loginId: u.login_id, role: u.role });
       closeModal(); toast(`${u.name} でログインしました`); cache = null; router();
     }
-    function logoutOperator() { cachedStaffAdminPw = ''; setOperatorSession({}); closeModal(); toast('ログアウトしました'); cache = null; router(); }
+    function logoutOperator() { setOperatorSession({}); closeModal(); toast('ログアウトしました'); cache = null; router(); }
 
     async function showStaffAccountMgmt() {
       if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
       openModal('👥 アカウント管理', `
-    <p style="font-size:12px;color:#6b7280;margin:0 0 14px">管理者パスワードで認証して、アカウントの一覧・作成・削除・パスワード変更ができます。</p>
+    <p style="font-size:12px;color:#6b7280;margin:0 0 14px">管理者としてログイン中のアカウントで、一覧・作成・削除・パスワード変更ができます。</p>
     <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden" aria-hidden="true">
       <input type="text" tabindex="-1" autocomplete="username">
       <input type="password" tabindex="-1" autocomplete="current-password">
-    </div>
-    <div style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb">
-      <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px">管理者認証</div>
-      ${fRow('管理者パスワード', fInput('admin_password', cachedStaffAdminPw, 'password', 'id="staff-admin-pw" autocomplete="current-password"'), '入力すると一覧を自動表示', true)}
     </div>
     <form id="staff-create-form" onsubmit="submitStaffCreate(event)" autocomplete="off" style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #e5e7eb">
       <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px">新規アカウント</div>
@@ -1047,13 +1039,12 @@
       <div style="font-size:13px;font-weight:600;color:#374151">登録アカウント</div>
       <button type="button" onclick="refreshStaffList()" style="background:#f3f4f6;border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">🔄 更新</button>
     </div>
-    <div id="staff-list-wrap"><div style="color:#9ca3af;font-size:12px;padding:12px">管理者パスワードを入力すると一覧が表示されます</div></div>
+    <div id="staff-list-wrap"><div style="color:#9ca3af;font-size:12px;padding:12px">読み込み中...</div></div>
     <div style="text-align:right;margin-top:16px">
       <button type="button" onclick="closeModal()" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer">閉じる</button>
     </div>`, { wide: true });
-      bindStaffAdminPwAutoRefresh();
       bindStaffCreateAntiAutofill();
-      if (cachedStaffAdminPw) await refreshStaffList({ silent: true });
+      await refreshStaffList({ silent: true });
     }
     function bindStaffCreateAntiAutofill() {
       const loginEl = document.getElementById('staff-new-login-id');
@@ -1069,46 +1060,20 @@
       clearIfAutofilled();
       [50, 150, 400, 800].forEach(ms => setTimeout(clearIfAutofilled, ms));
     }
-    function bindStaffAdminPwAutoRefresh() {
-      const el = document.getElementById('staff-admin-pw');
-      if (!el || el.dataset.bound) return;
-      el.dataset.bound = '1';
-      let timer;
-      el.addEventListener('input', () => {
-        cachedStaffAdminPw = el.value;
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          if (el.value) refreshStaffList({ silent: true });
-          else {
-            const wrap = document.getElementById('staff-list-wrap');
-            if (wrap) wrap.innerHTML = '<div style="color:#9ca3af;font-size:12px;padding:12px">管理者パスワードを入力すると一覧が表示されます</div>';
-          }
-        }, 400);
-      });
-    }
-    function getAdminPasswordInput() {
-      const v = document.getElementById('staff-admin-pw')?.value || document.querySelector('[name="admin_password"]')?.value || '';
-      if (v) cachedStaffAdminPw = v;
-      return v || cachedStaffAdminPw;
-    }
     async function refreshStaffList(opts = {}) {
       const silent = !!opts.silent;
-      const pw = getAdminPasswordInput();
-      if (!pw) {
-        if (!silent) toast('管理者パスワードを入力してください', 'error');
-        return;
-      }
       const wrap = document.getElementById('staff-list-wrap');
       if (wrap) wrap.innerHTML = '<div style="color:#9ca3af;font-size:12px;padding:12px">読み込み中...</div>';
       const { data, error } = await db.rpc('staff_list_accounts', {
-        p_admin_login_id: getOperatorLoginId(), p_admin_password: pw,
+        p_admin_login_id: getOperatorLoginId(),
       });
       if (error) {
-        if (wrap) wrap.innerHTML = `<div style="color:#dc2626;font-size:12px;padding:12px">${errMsg(error)}</div>`;
+        const hint = /staff_list_accounts|Could not find the function/i.test(errMsg(error))
+          ? '<br><span style="color:#6b7280">supabase_patch_admin_session_auth.sql を SQL Editor で実行してください</span>' : '';
+        if (wrap) wrap.innerHTML = `<div style="color:#dc2626;font-size:12px;padding:12px">${errMsg(error)}${hint}</div>`;
         if (!silent) toast(errMsg(error), 'error');
         return;
       }
-      cachedStaffAdminPw = pw;
       const rows = (data || []).map(s => {
         const isPrimary = s.login_id === 'admin';
         const roleBtn = isPrimary ? '—' : s.role === 'admin'
@@ -1133,16 +1098,14 @@
       e.preventDefault();
       if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
       const fd = new FormData(e.target);
-      const adminPw = getAdminPasswordInput();
       const name = (fd.get('create_staff_name') || document.getElementById('staff-new-name')?.value || '').trim();
       const newLoginId = (fd.get('create_staff_uid') || document.getElementById('staff-new-login-id')?.value || '').trim();
       const newPassword = fd.get('create_staff_password') || document.getElementById('staff-new-password')?.value || '';
-      if (!adminPw || !name || !newLoginId || !newPassword) {
+      if (!name || !newLoginId || !newPassword) {
         toast('すべての項目を入力してください', 'error'); return;
       }
       const { data, error } = await db.rpc('staff_create_account', {
         p_admin_login_id: getOperatorLoginId(),
-        p_admin_password: adminPw,
         p_name: name,
         p_new_login_id: newLoginId,
         p_new_password: newPassword,
@@ -1160,11 +1123,8 @@
       if (!isAdmin()) return;
       const label = role === 'admin' ? '管理者' : '一般';
       if (!confirm(`「${loginId}」を${label}に変更しますか？`)) return;
-      const pw = getAdminPasswordInput();
-      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
       const { error } = await db.rpc('staff_set_account_role', {
         p_admin_login_id: getOperatorLoginId(),
-        p_admin_password: pw,
         p_target_login_id: loginId,
         p_role: role,
       });
@@ -1175,11 +1135,8 @@
     async function deleteStaffAccount(loginId) {
       if (!isAdmin()) return;
       if (!confirm(`アカウント「${loginId}」を削除しますか？`)) return;
-      const pw = getAdminPasswordInput();
-      if (!pw) { toast('管理者パスワードを入力してから削除してください', 'error'); return; }
       const { error } = await db.rpc('staff_delete_account', {
         p_admin_login_id: getOperatorLoginId(),
-        p_admin_password: pw,
         p_target_login_id: loginId,
       });
       if (error) { toast(errMsg(error), 'error'); return; }
@@ -1689,34 +1646,29 @@
       openModal('💬 Slack 期限通知設定', `
     <p style="font-size:12px;color:#6b7280;margin:0 0 14px;line-height:1.6">
       案件の期限が<strong>残りN営業日以内</strong>（土日除く）になったタイミングで Slack に通知します（1案件1期限につき1回）。画面の「残日数」は暦日です。<br>
+      <span style="color:#6b7280">通知先チャンネルの<strong>メンバー全員</strong>に届きます（非公開チャンネルに招待したメンバーが対象）。</span><br>
       <span style="color:#9ca3af">毎日 JST 9:00 に自動で期限チェック・Slack 通知します（同一案件は1回のみ）。手動送信は通常不要です。</span>
     </p>
-    <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #e5e7eb">
-      ${fRow('管理者パスワード', fInput('slack_admin_password', cachedStaffAdminPw, 'password', 'id="slack-admin-pw" autocomplete="current-password"'), '設定の読み込み・保存に必要', true)}
-      <button type="button" onclick="loadSlackSettingsForm()" style="background:#f3f4f6;border:none;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer">🔄 設定を読み込む</button>
-    </div>
     <form id="slack-settings-form" onsubmit="saveSlackSettings(event)">
       <div id="slack-settings-fields">
-        <div style="color:#9ca3af;font-size:12px;padding:8px 0">管理者パスワードを入力して「設定を読み込む」を押してください</div>
+        <div style="color:#9ca3af;font-size:12px;padding:8px 0">読み込み中...</div>
       </div>
     </form>
     <div style="text-align:right;margin-top:12px">
       <button type="button" onclick="closeModal()" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer">閉じる</button>
     </div>`, { wide: true });
-      if (cachedStaffAdminPw) loadSlackSettingsForm();
-    }
-    function getSlackAdminPassword() {
-      const v = document.getElementById('slack-admin-pw')?.value || '';
-      if (v) cachedStaffAdminPw = v;
-      return v || cachedStaffAdminPw;
+      loadSlackSettingsForm();
     }
     async function loadSlackSettingsForm() {
-      const pw = getSlackAdminPassword();
-      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
       const { data, error } = await db.rpc('staff_get_slack_settings', {
-        p_admin_login_id: getOperatorLoginId(), p_admin_password: pw,
+        p_admin_login_id: getOperatorLoginId(),
       });
-      if (error) { toast(errMsg(error), 'error'); return; }
+      if (error) {
+        const hint = /staff_get_slack_settings|Could not find the function/i.test(errMsg(error))
+          ? ' supabase_patch_admin_session_auth.sql を SQL Editor で実行してください' : '';
+        toast(errMsg(error) + hint, 'error');
+        return;
+      }
       const s = data?.[0] || {};
       const webhookHint = s.webhook_url_masked ? `（登録済: ${s.webhook_url_masked}）` : '';
       const botHint = s.bot_token_masked ? `（登録済: ${s.bot_token_masked}）` : '';
@@ -1753,15 +1705,14 @@
       ${fRow('通知タイミング（営業日）', fInput('slack_notify_days', s.notify_business_days ?? 10, 'number', 'min="1" max="60"'), '残り何営業日以内なら通知するか（既定: 10）。暦日4日でも営業日2日なら閾値4で通知', true)}
       <div class="form-actions">
         <button type="button" class="btn-cancel" onclick="triggerSlackNotify(true)">🔍 通知対象プレビュー</button>
-        <button type="button" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 16px;cursor:pointer" onclick="triggerSlackTestPing()">📡 接続テスト送信</button>
-        <button type="button" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 16px;cursor:pointer" onclick="triggerSlackNotify(false)" title="通常は毎日自動実行。テスト用">⚙️ 手動送信（テスト）</button>
+        <button type="button" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 16px;cursor:pointer" onclick="triggerSlackTestPing()">📡 接続テスト</button>
+        <button type="button" style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:8px;padding:8px 16px;cursor:pointer;font-weight:500" onclick="triggerSlackSampleNotify()">📨 通知サンプル送信</button>
+        <button type="button" style="background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 16px;cursor:pointer" onclick="triggerSlackNotify(false)" title="通常は毎日自動実行。テスト用">⚙️ 手動送信</button>
         <button type="submit" class="btn-primary">保存</button>
       </div>`;
     }
     async function saveSlackSettings(e) {
       e.preventDefault(); if (!isAdmin()) return;
-      const pw = getSlackAdminPassword();
-      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
       const fd = new FormData(e.target);
       const botToken = (fd.get('slack_bot_token') || '').trim();
       if (botToken && botToken.startsWith('xoxp-')) {
@@ -1774,7 +1725,6 @@
       }
       const { error } = await db.rpc('staff_save_slack_settings', {
         p_admin_login_id: getOperatorLoginId(),
-        p_admin_password: pw,
         p_enabled: fd.get('slack_enabled') === 'on',
         p_webhook_url: fd.get('slack_webhook_url') || null,
         p_app_base_url: fd.get('slack_app_base_url') || null,
@@ -1789,8 +1739,6 @@
     }
     async function triggerSlackTestPing() {
       if (!isAdmin()) return;
-      const pw = getSlackAdminPassword();
-      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
       const botToken = (document.querySelector('[name=slack_bot_token]')?.value || '').trim();
       const channelId = (document.querySelector('[name=slack_channel_id]')?.value || '').trim();
       if (!botToken || !channelId) {
@@ -1800,14 +1748,13 @@
       toast('Slack 接続テスト送信中...');
       const { error } = await db.rpc('staff_test_slack_ping', {
         p_admin_login_id: getOperatorLoginId(),
-        p_admin_password: pw,
         p_bot_token: botToken || null,
         p_channel_id: channelId || null,
       });
       if (error) {
         const msg = errMsg(error);
         if (/staff_test_slack_ping|Could not find the function/i.test(msg)) {
-          toast('接続テスト機能が未作成です。supabase_patch_slack_auth_fix.sql を実行してください', 'error');
+          toast('接続テスト機能が未作成です。supabase_patch_admin_session_auth.sql を実行してください', 'error');
         } else {
           toast(msg, 'error');
         }
@@ -1815,10 +1762,71 @@
       }
       toast('Slack 接続テストを送信しました。期間管理通知チャンネルを確認してください');
     }
+    function buildSlackSampleItem(data, threshold, baseUrl) {
+      const today = todayJST();
+      const candidates = buildDeadlineItems(data)
+        .filter(it => {
+          if (it.days === null || it.days < 0) return false;
+          if (it.daysPhase === 'until_start') return false;
+          const bd = businessDaysUntil(it.deadline, today);
+          return bd !== null && bd <= threshold;
+        });
+      if (candidates.length) {
+        const it = candidates[0];
+        return {
+          subsidy_type: it.type,
+          application_id: it.appId,
+          company_id: it.companyId,
+          company_name: it.companyName,
+          target: it.target,
+          kind: it.kind,
+          deadline_date: toDateKey(it.deadline),
+          business_days: businessDaysUntil(it.deadline, today),
+          link: `${baseUrl}#company/${it.companyId}/status?section=${it.type}&app=${it.appId}`,
+        };
+      }
+      const dl = new Date(today);
+      dl.setDate(dl.getDate() + Math.max(threshold, 3));
+      return {
+        subsidy_type: 'biz',
+        application_id: '00000000-0000-0000-0000-000000000001',
+        company_id: '00000000-0000-0000-0000-000000000001',
+        company_name: 'サンプル株式会社（テスト）',
+        target: '山田 太郎',
+        kind: '事業完了期限（年度）',
+        deadline_date: toDateKey(dl),
+        business_days: threshold,
+        link: `${baseUrl}#dashboard`,
+      };
+    }
+    async function triggerSlackSampleNotify() {
+      if (!isAdmin()) return;
+      toast('本番形式の通知サンプルを送信中...');
+      try {
+        const data = await getData();
+        const threshold = parseInt(document.querySelector('[name=slack_notify_days]')?.value, 10) || 10;
+        const baseUrl = (document.querySelector('[name=slack_app_base_url]')?.value || defaultAppBaseUrl()).replace(/\/$/, '');
+        const item = buildSlackSampleItem(data, threshold, baseUrl);
+        const { error } = await db.rpc('staff_test_slack_sample_notify', {
+          p_admin_login_id: getOperatorLoginId(),
+          p_items: [item],
+        });
+        if (error) {
+          const msg = errMsg(error);
+          if (/staff_test_slack_sample_notify|Could not find the function/i.test(msg)) {
+            toast('通知サンプル機能が未作成です。supabase_patch_admin_session_auth.sql を SQL Editor で実行してください', 'error');
+          } else {
+            toast(msg, 'error');
+          }
+          return;
+        }
+        toast(`通知サンプルを送信しました（${item.company_name}）。チャンネルメンバー全員に届きます`);
+      } catch (err) {
+        toast(errMsg(err) || '通知サンプルの送信に失敗しました', 'error');
+      }
+    }
     async function triggerSlackNotify(dryRun) {
       if (!isAdmin()) return;
-      const pw = getSlackAdminPassword();
-      if (!pw) { toast('管理者パスワードを入力してください', 'error'); return; }
       toast(dryRun ? '通知対象を確認中...' : 'Slack 通知を送信中...');
       try {
         const data = await getData();
@@ -1845,14 +1853,13 @@
           }));
         const { data: result, error } = await db.rpc('staff_run_slack_notify', {
           p_admin_login_id: getOperatorLoginId(),
-          p_admin_password: pw,
           p_dry_run: dryRun,
           p_items: items,
         });
         if (error) {
           const msg = errMsg(error);
           if (/staff_run_slack_notify|Could not find the function|schema cache/i.test(msg)) {
-            toast('staff_run_slack_notify が未作成です。supabase_patch_slack_notify_rpc.sql を SQL Editor で実行してください', 'error');
+            toast('staff_run_slack_notify が未作成です。supabase_patch_admin_session_auth.sql を SQL Editor で実行してください', 'error');
           } else {
             toast(msg, 'error');
           }
@@ -2044,12 +2051,11 @@
         <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">3-2. パスワード変更</h4>
         <ul>
           <li><strong>一般アカウント</strong> … ログインモーダルの「🔑 パスワード変更」。<strong>現在のパスワード</strong>＋新パスワード（8文字以上）が必要。</li>
-          <li><strong>管理者</strong> … 「👥 アカウント管理」→ 一覧の「PW変更」。相手の現在PWは不要。管理者PWで認証。</li>
+          <li><strong>管理者</strong> … 「👥 アカウント管理」→ 一覧の「PW変更」。相手の現在PWは不要。</li>
         </ul>
         <h4 style="font-size:13px;font-weight:600;margin:12px 0 6px">3-3. アカウント管理（管理者のみ）</h4>
         <ol style="margin:0 0 10px 18px;font-size:13px;color:#374151;line-height:1.7">
-          <li>ログイン後「👥 アカウント管理」を開く</li>
-          <li>管理者パスワードを入力 → 登録アカウント一覧が<strong>自動表示</strong></li>
+          <li>ログイン後「👥 アカウント管理」を開く → 登録アカウント一覧が表示されます</li>
           <li>「＋ アカウント作成」で表示名・ログインID・パスワード・権限（一般/管理者）を設定</li>
           <li>一覧から権限変更・PW変更・削除が可能（初期 admin は保護）</li>
         </ol>
@@ -3084,7 +3090,6 @@
       const fn = { career_up: isCareerUpExpired, biz: isBizExpired, work: isWorkExpired, dual: isDualExpired, reskill: isReskillExpired, over65: isOver65Expired }[type];
       return fn ? apps.filter(a => !fn(a)) : apps;
     }
-
     function setDashType(type) {
       dashFilter.type = type;
       updateDash();
