@@ -2,6 +2,8 @@
 --  Slack 毎日自動通知（pg_cron / JST 9:00）
 --  前提: http 拡張有効、supabase_patch_slack_http_sync.sql 実行済み
 --  Dashboard → Database → Extensions で pg_cron も有効化
+--  適用順: … → supabase_patch_admin_session_auth.sql → 本ファイル
+--  （本ファイル実行後、admin_session_auth を再実行して送信表示を最新化）
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS http WITH SCHEMA extensions;
@@ -85,6 +87,7 @@ LANGUAGE sql STABLE AS $$
   SELECT coalesce(
     (SELECT deadline_date FROM program_deadlines WHERE subsidy_type = p_type AND deadline_key = p_key LIMIT 1),
     CASE
+      WHEN p_type = 'biz' AND p_key = 'app_limit' THEN '2026-11-30'::date
       WHEN p_type = 'biz' AND p_key = 'comp_limit' THEN '2027-01-31'::date
       WHEN p_type = 'biz' AND p_key = 'sup_max' THEN '2027-04-10'::date
       WHEN p_type = 'work' AND p_key = 'app_limit' THEN '2026-11-30'::date
@@ -96,6 +99,14 @@ LANGUAGE sql STABLE AS $$
   );
 $$;
 
+CREATE OR REPLACE FUNCTION _slack_case_link(
+  p_base text, p_company_id uuid, p_type text, p_app_id uuid
+) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT rtrim(p_base, '/') || '#company/' || p_company_id::text
+    || '/status?section=' || p_type || '&app=' || p_app_id::text;
+$$;
+
 CREATE OR REPLACE FUNCTION _slack_item_json(
   p_type text, p_company_id uuid, p_company_name text, p_app_id uuid,
   p_target text, p_kind text, p_deadline date, p_cal_days int, p_days_phase text,
@@ -103,7 +114,8 @@ CREATE OR REPLACE FUNCTION _slack_item_json(
 ) RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE
-    WHEN p_deadline IS NULL OR p_cal_days IS NULL OR p_cal_days < 0 OR p_days_phase = 'until_start' THEN NULL
+    WHEN p_deadline IS NULL OR p_cal_days IS NULL OR p_days_phase = 'until_start' THEN NULL
+    WHEN p_cal_days < -7 THEN NULL
     ELSE jsonb_build_object(
       'subsidy_type', p_type,
       'company_id', p_company_id::text,
@@ -112,8 +124,14 @@ LANGUAGE sql IMMUTABLE AS $$
       'target', p_target,
       'kind', p_kind,
       'deadline_date', to_char(p_deadline, 'YYYY-MM-DD'),
-      'business_days', _biz_days_until(p_deadline, _jst_today()),
-      'link', rtrim(p_base_url, '/') || '#company/' || p_company_id::text || '/status?section=' || p_type || '&app=' || p_app_id::text
+      'cal_days', p_cal_days,
+      'business_days', CASE WHEN p_cal_days <= 0 THEN NULL ELSE _biz_days_until(p_deadline, _jst_today()) END,
+      'deadline_status', CASE
+        WHEN p_cal_days < 0 THEN 'expired'
+        WHEN p_cal_days = 0 THEN 'today'
+        ELSE 'upcoming'
+      END,
+      'link', _slack_case_link(p_base_url, p_company_id, p_type, p_app_id)
     )
   END;
 $$;
@@ -164,6 +182,21 @@ BEGIN
   FOR r IN
     SELECT bi.*, c.name AS company_name FROM business_improvement_applications bi JOIN companies c ON c.id = bi.company_id
   LOOP
+    IF r.status = '未申請' AND r.application_date IS NULL
+       AND NOT r.status = ANY(ARRAY['支給申請済','承認済（助成金受領）']) THEN
+      v_deadline := _prog_deadline('biz', 'app_limit');
+      v_j := _slack_item_json('biz', r.company_id, r.company_name, r.id, NULL, '交付申請期限（年度）', v_deadline, _cal_days_until(v_deadline, v_today), NULL, v_base);
+      IF v_j IS NOT NULL THEN v_items := v_items || jsonb_build_array(v_j); END IF;
+    END IF;
+    IF r.wage_raise_date IS NOT NULL
+       AND NOT r.status = ANY(ARRAY['支給申請済','承認済（助成金受領）']) THEN
+      v_deadline := _add_months(r.wage_raise_date, 6);
+      v_days := _cal_days_until(v_deadline, v_today);
+      IF v_days IS NOT NULL AND v_days >= -7 THEN
+        v_j := _slack_item_json('biz', r.company_id, r.company_name, r.id, NULL, '賃金6か月維持期限', v_deadline, v_days, NULL, v_base);
+        IF v_j IS NOT NULL THEN v_items := v_items || jsonb_build_array(v_j); END IF;
+      END IF;
+    END IF;
     v_comp := _prog_deadline('biz', 'comp_limit');
     IF r.completion_date_actual IS NULL AND NOT r.status = ANY(ARRAY['支給申請済','承認済（助成金受領）']) THEN
       v_j := _slack_item_json('biz', r.company_id, r.company_name, r.id, NULL, '事業完了期限（年度）', v_comp, _cal_days_until(v_comp, v_today), NULL, v_base);
@@ -276,94 +309,10 @@ BEGIN
 END;
 $$;
 
--- 送信コア（管理者 RPC / cron 共通）
-CREATE OR REPLACE FUNCTION _slack_dispatch_items(p_items jsonb, p_dry_run boolean DEFAULT false)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, extensions
-AS $$
-DECLARE
-  v_settings slack_settings%ROWTYPE;
-  v_threshold int;
-  v_item jsonb;
-  v_dedupe text;
-  v_exists uuid;
-  v_sent jsonb := '[]'::jsonb;
-  v_skipped int := 0;
-  v_candidates int := 0;
-  v_type_label text;
-  v_target text;
-  v_text text;
-  v_payload jsonb;
-  v_body text;
-  v_bd int;
-  v_use_bot boolean;
-  v_http_status int;
-  v_slack jsonb;
-BEGIN
-  SELECT * INTO v_settings FROM slack_settings WHERE id = 1;
-  IF NOT FOUND THEN RAISE EXCEPTION 'Slack 設定がありません'; END IF;
-  IF NOT v_settings.enabled THEN RETURN jsonb_build_object('ok', true, 'skipped', 'notifications disabled'); END IF;
-  IF v_settings.app_base_url IS NULL OR trim(v_settings.app_base_url) = '' THEN
-    RAISE EXCEPTION 'システムURL（app_base_url）が未設定です';
-  END IF;
-  v_use_bot := v_settings.bot_token IS NOT NULL AND trim(v_settings.bot_token) <> ''
-    AND v_settings.channel_id IS NOT NULL AND trim(v_settings.channel_id) <> '';
-  IF NOT v_use_bot AND (v_settings.webhook_url IS NULL OR trim(v_settings.webhook_url) = '') THEN
-    RAISE EXCEPTION 'Bot トークン+チャンネルID、または Webhook URL を設定してください';
-  END IF;
-  v_threshold := coalesce(v_settings.notify_business_days, 10);
-
-  FOR v_item IN SELECT * FROM jsonb_array_elements(coalesce(p_items, '[]'::jsonb))
-  LOOP
-    v_bd := (v_item->>'business_days')::int;
-    IF v_bd IS NULL OR v_bd > v_threshold THEN CONTINUE; END IF;
-    v_candidates := v_candidates + 1;
-    v_dedupe := format('%s:%s:%s:%s:%s', v_item->>'subsidy_type', v_item->>'application_id', v_item->>'kind', v_item->>'deadline_date', v_threshold);
-    SELECT id INTO v_exists FROM slack_notification_log WHERE dedupe_key = v_dedupe LIMIT 1;
-    IF v_exists IS NOT NULL THEN v_skipped := v_skipped + 1; CONTINUE; END IF;
-
-    v_type_label := CASE v_item->>'subsidy_type'
-      WHEN 'career_up' THEN 'キャリアアップ' WHEN 'biz' THEN '業務改善' WHEN 'work' THEN '働き方改革'
-      WHEN 'dual' THEN '両立支援' WHEN 'reskill' THEN 'リスキリング' WHEN 'over65' THEN '65歳超'
-      ELSE coalesce(v_item->>'subsidy_type', '') END;
-    v_target := nullif(trim(v_item->>'target'), '');
-    v_text := format(E'*🟡 残り%s営業日*（%s営業日以内で通知）\n%s | %s%s\n%s: %s', v_bd, v_threshold, v_type_label, v_item->>'company_name',
-      CASE WHEN v_target IS NOT NULL THEN E'\n対象: ' || v_target ELSE '' END, v_item->>'kind', replace(v_item->>'deadline_date', '-', '/'));
-    v_payload := jsonb_build_object('text', format('【助成金期限】%s — 残り%s営業日', v_item->>'company_name', v_bd),
-      'blocks', jsonb_build_array(
-        jsonb_build_object('type', 'section', 'text', jsonb_build_object('type', 'mrkdwn', 'text', v_text)),
-        jsonb_build_object('type', 'actions', 'elements', jsonb_build_array(
-          jsonb_build_object('type', 'button', 'text', jsonb_build_object('type', 'plain_text', 'text', '📋 案件を開く', 'emoji', true),
-            'url', coalesce(v_item->>'link', v_settings.app_base_url), 'style', 'primary')))));
-
-    IF NOT coalesce(p_dry_run, false) THEN
-      IF v_use_bot THEN
-        v_body := (v_payload || jsonb_build_object('channel', trim(v_settings.channel_id)))::text;
-        SELECT r.status, r.content::jsonb INTO v_http_status, v_slack
-        FROM extensions.http(('POST', 'https://slack.com/api/chat.postMessage',
-          ARRAY[extensions.http_header('Authorization', 'Bearer ' || trim(v_settings.bot_token))],
-          'application/json', v_body)::extensions.http_request) AS r;
-      ELSE
-        SELECT r.status, r.content::jsonb INTO v_http_status, v_slack
-        FROM extensions.http(('POST', v_settings.webhook_url, ARRAY[]::extensions.http_header[],
-          'application/json', v_payload::text)::extensions.http_request) AS r;
-      END IF;
-      IF v_use_bot AND NOT coalesce((v_slack->>'ok')::boolean, false) THEN
-        RAISE EXCEPTION 'Slack エラー: %', coalesce(v_slack->>'error', v_slack::text);
-      END IF;
-      INSERT INTO slack_notification_log (dedupe_key, subsidy_type, application_id, company_id, company_name, kind, deadline_date)
-      VALUES (v_dedupe, v_item->>'subsidy_type', nullif(v_item->>'application_id', '')::uuid, nullif(v_item->>'company_id', '')::uuid,
-        v_item->>'company_name', v_item->>'kind', (v_item->>'deadline_date')::date);
-    END IF;
-    v_sent := v_sent || jsonb_build_array(format('%s %s %s', v_type_label, v_item->>'company_name', v_item->>'kind'));
-  END LOOP;
-
-  RETURN jsonb_build_object('ok', true, 'dry_run', coalesce(p_dry_run, false), 'threshold', v_threshold,
-    'candidates', v_candidates, 'sent_count', jsonb_array_length(v_sent), 'skipped_count', v_skipped, 'sent', v_sent);
-END;
-$$;
+-- ---- 送信処理 ----
+-- _slack_deadline_label / _slack_deadline_summary / _slack_dispatch_items は
+-- supabase_patch_admin_session_auth.sql で定義（申請期間まで / 期間切れ 表示）。
+-- このパッチ適用後、必ず admin_session_auth を再実行してください。
 
 -- 毎日自動実行（pg_cron）
 CREATE OR REPLACE FUNCTION slack_daily_notify_cron()
@@ -387,86 +336,6 @@ BEGIN
   RETURN v_result || jsonb_build_object('source', 'cron');
 END;
 $$;
-
--- staff_run_slack_notify を共通送信に接続
-CREATE OR REPLACE FUNCTION staff_run_slack_notify(
-  p_admin_login_id text,
-  p_admin_password text,
-  p_dry_run boolean DEFAULT true,
-  p_items jsonb DEFAULT '[]'::jsonb
-)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, extensions
-AS $$
-BEGIN
-  IF NOT _verify_admin(p_admin_login_id, p_admin_password) THEN
-    RAISE EXCEPTION '権限がありません';
-  END IF;
-  RETURN _slack_dispatch_items(p_items, coalesce(p_dry_run, true));
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION staff_run_slack_notify(text, text, boolean, jsonb) TO anon, authenticated;
-
--- 設定 RPC 更新（cron 項目）
-DROP FUNCTION IF EXISTS staff_get_slack_settings(text, text);
-CREATE FUNCTION staff_get_slack_settings(p_admin_login_id text, p_admin_password text)
-RETURNS TABLE(
-  enabled boolean,
-  webhook_url_masked text,
-  bot_token_masked text,
-  channel_id text,
-  app_base_url text,
-  notify_business_days int,
-  cron_enabled boolean,
-  last_cron_run_at timestamptz,
-  updated_at timestamptz
-)
-LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public, extensions
-AS $$
-BEGIN
-  IF NOT _verify_admin(p_admin_login_id, p_admin_password) THEN RAISE EXCEPTION '権限がありません'; END IF;
-  RETURN QUERY
-  SELECT s.enabled,
-    CASE WHEN s.webhook_url IS NULL OR length(s.webhook_url) < 8 THEN NULL ELSE '****' || right(s.webhook_url, 4) END,
-    CASE WHEN s.bot_token IS NULL OR length(s.bot_token) < 8 THEN NULL ELSE 'xoxb-****' || right(s.bot_token, 4) END,
-    s.channel_id, s.app_base_url, s.notify_business_days,
-    coalesce(s.cron_enabled, true), s.last_cron_run_at, s.updated_at
-  FROM slack_settings s WHERE s.id = 1;
-END;
-$$;
-GRANT EXECUTE ON FUNCTION staff_get_slack_settings(text, text) TO anon, authenticated;
-
-DROP FUNCTION IF EXISTS staff_save_slack_settings(text, text, boolean, text, text, int, text, text);
-CREATE FUNCTION staff_save_slack_settings(
-  p_admin_login_id text, p_admin_password text, p_enabled boolean,
-  p_webhook_url text, p_app_base_url text, p_notify_business_days int DEFAULT 10,
-  p_bot_token text DEFAULT NULL, p_channel_id text DEFAULT NULL, p_cron_enabled boolean DEFAULT true
-)
-RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions
-AS $$
-DECLARE cur_webhook text; cur_bot text; v_in text;
-BEGIN
-  IF NOT _verify_admin(p_admin_login_id, p_admin_password) THEN RAISE EXCEPTION '権限がありません'; END IF;
-  v_in := _normalize_slack_bot_token(p_bot_token);
-  SELECT webhook_url, bot_token INTO cur_webhook, cur_bot FROM slack_settings WHERE id = 1;
-  UPDATE slack_settings SET
-    enabled = coalesce(p_enabled, false),
-    webhook_url = CASE WHEN p_webhook_url IS NULL OR trim(p_webhook_url) = '' OR p_webhook_url LIKE '****%' THEN cur_webhook ELSE trim(p_webhook_url) END,
-    bot_token = CASE WHEN v_in IS NULL OR p_bot_token LIKE 'xoxb-****%' THEN cur_bot ELSE v_in END,
-    channel_id = nullif(trim(p_channel_id), ''),
-    app_base_url = nullif(trim(p_app_base_url), ''),
-    notify_business_days = p_notify_business_days,
-    cron_enabled = coalesce(p_cron_enabled, true),
-    updated_at = now()
-  WHERE id = 1;
-  RETURN true;
-END;
-$$;
-GRANT EXECUTE ON FUNCTION staff_save_slack_settings(text, text, boolean, text, text, int, text, text, boolean) TO anon, authenticated;
 
 -- pg_cron 登録（JST 9:00 = UTC 0:00）
 DO $$

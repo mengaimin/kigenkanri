@@ -35,6 +35,8 @@ CREATE TABLE career_up_applications (
                       CHECK (status_first  IN ('未申請','申請済','承認済','不承認')),
   status_second       text
                       CHECK (status_second IN ('未申請','申請済','承認済','不承認')),
+  subsidy_amount      bigint,                       -- 支給決定額（円）
+  reception_number    text,                         -- 受付番号・管理番号
   notes               text,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now()
@@ -51,6 +53,10 @@ CREATE TABLE business_improvement_applications (
   worker_count          text CHECK (worker_count IN ('1人','2〜3人','4〜5人','6〜7人','8人以上','10人以上（特例）')),
   special_category      text,                       -- 特例事業者区分
   equipment_description text,                       -- 設備投資内容
+  min_wage_before       int,                        -- 引上げ前の事業場内最低賃金（円）
+  min_wage_after        int,                        -- 引上げ後の事業場内最低賃金（円）
+  wage_raise_date       date,                       -- 賃金引上げ日（6か月維持期限の起算）
+  equipment_amount      bigint,                     -- 設備投資等の金額（円）
   application_date      date,                       -- 交付申請日
   decision_date         date,                       -- 交付決定日
   completion_date_actual date,                      -- 事業完了日（実績）
@@ -70,6 +76,7 @@ CREATE TABLE work_style_applications (
   id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id           uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   application_date     date,                        -- 交付申請日
+  decision_date        date,                        -- 交付決定日
   completion_date      date,                        -- 事業完了日
   goal_type            text,                        -- 成果目標（①②③）
   wage_increase_addon  boolean NOT NULL DEFAULT false,  -- 賃上げ加算

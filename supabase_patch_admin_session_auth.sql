@@ -150,6 +150,46 @@ GRANT EXECUTE ON FUNCTION staff_admin_reset_password(text, text, text) TO anon, 
 
 -- === Slack 通知 ===
 
+CREATE OR REPLACE FUNCTION _slack_case_link(
+  p_base text, p_company_id uuid, p_type text, p_app_id uuid
+) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT rtrim(p_base, '/') || '#company/' || p_company_id::text
+    || '/status?section=' || p_type || '&app=' || p_app_id::text;
+$$;
+
+CREATE OR REPLACE FUNCTION _slack_escape_mrkdwn(p_text text)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN p_text IS NULL OR p_text = '' THEN ''
+    ELSE replace(replace(replace(replace(p_text, '&', '&amp;'), '<', '&lt;'), '>', '&gt;'), '|', '｜')
+  END;
+$$;
+
+CREATE OR REPLACE FUNCTION _slack_deadline_label(p_cal_days int, p_biz_days int)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN p_cal_days IS NULL THEN '⚪ 期限'
+    WHEN p_cal_days < 0 THEN format('🔴 *期間切れ*（%s日超過）', abs(p_cal_days))
+    WHEN p_cal_days = 0 THEN '🔴 *本日期限*'
+    WHEN p_biz_days IS NOT NULL THEN format('🟡 *申請期間まで* 残り%s営業日', p_biz_days)
+    ELSE format('🟡 *申請期間まで* 残り%s日', p_cal_days)
+  END;
+$$;
+
+CREATE OR REPLACE FUNCTION _slack_deadline_summary(p_cal_days int, p_biz_days int)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN p_cal_days IS NULL THEN '期限'
+    WHEN p_cal_days < 0 THEN format('期間切れ（%s日超過）', abs(p_cal_days))
+    WHEN p_cal_days = 0 THEN '本日期限'
+    WHEN p_biz_days IS NOT NULL THEN format('申請期間まで 残り%s営業日', p_biz_days)
+    ELSE format('申請期間まで 残り%s日', p_cal_days)
+  END;
+$$;
+
 -- 2引数版（daily_cron）→ 4引数版へ更新（サンプル通知・skip_log 対応）
 DROP FUNCTION IF EXISTS public._slack_dispatch_items(jsonb, boolean);
 DROP FUNCTION IF EXISTS public._slack_dispatch_items(jsonb, boolean, boolean, boolean);
@@ -180,11 +220,13 @@ DECLARE
   v_payload jsonb;
   v_body text;
   v_bd int;
+  v_cal int;
   v_use_bot boolean;
   v_http_status int;
   v_slack jsonb;
   v_prefix text;
   v_link text;
+  v_summary text;
 BEGIN
   SELECT * INTO v_settings FROM slack_settings WHERE id = 1;
   IF NOT FOUND THEN RAISE EXCEPTION 'Slack 設定がありません'; END IF;
@@ -202,9 +244,33 @@ BEGIN
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(coalesce(p_items, '[]'::jsonb))
   LOOP
+    v_cal := (v_item->>'cal_days')::int;
+    IF v_cal IS NULL AND v_item->>'deadline_date' ~ '^\d{4}-\d{2}-\d{2}$' THEN
+      v_cal := ((v_item->>'deadline_date')::date - _jst_today());
+    END IF;
     v_bd := (v_item->>'business_days')::int;
-    IF NOT p_test_label AND (v_bd IS NULL OR v_bd > v_threshold) THEN CONTINUE; END IF;
-    IF p_test_label AND v_bd IS NULL THEN v_bd := v_threshold; END IF;
+    IF v_bd IS NULL AND v_cal IS NOT NULL AND v_cal > 0 AND v_item->>'deadline_date' ~ '^\d{4}-\d{2}-\d{2}$' THEN
+      v_bd := _biz_days_until((v_item->>'deadline_date')::date, _jst_today());
+    END IF;
+    IF NOT p_test_label THEN
+      IF v_cal IS NULL THEN CONTINUE; END IF;
+      IF v_cal < -7 THEN CONTINUE; END IF;
+      IF v_cal < 0 THEN
+        NULL;
+      ELSIF v_cal = 0 THEN
+        NULL;
+      ELSIF v_bd IS NOT NULL AND v_bd <= v_threshold THEN
+        NULL;
+      ELSIF v_bd IS NULL AND v_cal <= v_threshold THEN
+        NULL;
+      ELSE
+        CONTINUE;
+      END IF;
+    END IF;
+    IF p_test_label AND v_cal IS NULL AND v_bd IS NULL THEN
+      v_cal := v_threshold;
+      v_bd := v_threshold;
+    END IF;
     v_candidates := v_candidates + 1;
     v_dedupe := format('%s:%s:%s:%s:%s', v_item->>'subsidy_type', v_item->>'application_id', v_item->>'kind', v_item->>'deadline_date', v_threshold);
     IF NOT p_skip_log AND NOT coalesce(p_dry_run, false) THEN
@@ -217,8 +283,14 @@ BEGIN
       WHEN 'dual' THEN '両立支援' WHEN 'reskill' THEN 'リスキリング' WHEN 'over65' THEN '65歳超'
       ELSE coalesce(v_item->>'subsidy_type', '') END;
     v_target := nullif(trim(v_item->>'target'), '');
-    v_text := format(E'*🟡 残り%s営業日*（%s営業日以内で通知）\n%s | %s%s\n%s: %s', v_bd, v_threshold, v_type_label, v_item->>'company_name',
-      CASE WHEN v_target IS NOT NULL THEN E'\n対象: ' || v_target ELSE '' END, v_item->>'kind', replace(v_item->>'deadline_date', '-', '/'));
+    v_summary := _slack_deadline_summary(v_cal, v_bd);
+    v_text := format(E'%s\n%s | %s%s\n%s: %s', _slack_deadline_label(v_cal, v_bd), v_type_label,
+      _slack_escape_mrkdwn(v_item->>'company_name'),
+      CASE WHEN v_target IS NOT NULL THEN E'\n対象: ' || _slack_escape_mrkdwn(v_target) ELSE '' END,
+      _slack_escape_mrkdwn(v_item->>'kind'), replace(v_item->>'deadline_date', '-', '/'));
+    IF v_cal IS NOT NULL AND v_cal >= 0 AND v_bd IS NOT NULL THEN
+      v_text := v_text || format(E'\n_暦日: あと%s日_', v_cal);
+    END IF;
     IF p_test_label THEN
       v_text := E'*📋 通知サンプル（テスト送信）*\n' || v_text;
     END IF;
@@ -226,12 +298,26 @@ BEGIN
     IF v_link IS NOT NULL AND v_link !~* '^https?://' THEN
       v_link := 'https://' || ltrim(v_link, '/');
     END IF;
-    IF v_link IS NOT NULL THEN
-      v_text := v_text || format(E'\n<%s|📋 案件を開く>', v_link);
+    IF v_link IS NOT NULL AND v_link ~* '^(https?://)(localhost|127\.0\.0\.1|\[::1\])([:/]|$)' THEN
+      v_link := NULL;
     END IF;
-    v_payload := jsonb_build_object('text', format('%s%s — 残り%s営業日', v_prefix, v_item->>'company_name', v_bd),
-      'blocks', jsonb_build_array(
-        jsonb_build_object('type', 'section', 'text', jsonb_build_object('type', 'mrkdwn', 'text', v_text))));
+    IF v_link IS NOT NULL THEN
+      v_payload := jsonb_build_object('text', format('%s%s — %s', v_prefix, v_item->>'company_name', v_summary),
+        'blocks', jsonb_build_array(
+          jsonb_build_object('type', 'section', 'text', jsonb_build_object('type', 'mrkdwn', 'text', v_text)),
+          jsonb_build_object('type', 'actions', 'elements', jsonb_build_array(
+            jsonb_build_object('type', 'button',
+              'text', jsonb_build_object('type', 'plain_text', 'text', '📋 案件を開く', 'emoji', true),
+              'url', v_link
+            )
+          ))
+        ));
+    ELSE
+      v_text := v_text || E'\n_（システムURLが未設定のためリンクなし）_';
+      v_payload := jsonb_build_object('text', format('%s%s — %s', v_prefix, v_item->>'company_name', v_summary),
+        'blocks', jsonb_build_array(
+          jsonb_build_object('type', 'section', 'text', jsonb_build_object('type', 'mrkdwn', 'text', v_text))));
+    END IF;
 
     IF NOT coalesce(p_dry_run, false) THEN
       IF v_use_bot THEN
