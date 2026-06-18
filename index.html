@@ -1822,6 +1822,30 @@
       if (!isAdmin()) return '';
       return `<button type="button" class="add-only" onclick="showFormSlackSettings()" style="background:#4f46e5;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:500">💬 Slack通知</button>`;
     }
+    const OPERATION_STARTED_KEY = 'kikan_operation_started';
+    function isOperationStarted() {
+      return localStorage.getItem(OPERATION_STARTED_KEY) === '1';
+    }
+    function renderOperationStartBtn() {
+      if (!isAdmin() || isOperationStarted()) return '';
+      return `<button type="button" class="add-only" onclick="startOperation()" style="background:#dc2626;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:500">🚀 運用開始</button>`;
+    }
+    async function startOperation() {
+      if (!isAdmin()) { toast('管理者のみ利用できます', 'error'); return; }
+      if (!confirm('登録済みの会社情報をすべて削除します、よろしいでしょうか？')) return;
+      try {
+        const { error } = await db.from('companies').delete().gte('created_at', '1970-01-01T00:00:00Z');
+        if (error) throw error;
+        await logAudit({ tableName: 'system', action: 'delete', summary: '運用開始: 全会社情報を削除（案件・メモは連動削除）' });
+        localStorage.setItem(OPERATION_STARTED_KEY, '1');
+        localStorage.removeItem('kikan_operation_backup');
+        cache = null;
+        toast('運用を開始しました。会社情報をすべて削除しました');
+        router();
+      } catch (e) {
+        toast('削除に失敗しました: ' + errMsg(e), 'error');
+      }
+    }
     function defaultAppBaseUrl() {
       const url = `${location.origin}${location.pathname}`.replace(/\/$/, '') || location.href.split('#')[0];
       return isLocalAppUrl(url) ? '' : url;
@@ -2390,7 +2414,7 @@
         <h3>11. 期限の自動計算</h3>
         <ul>
           <li><strong>👔 キャリアアップ</strong> … 転換日・給与支給日から1回目/2回目申請期限。支給決定額・受付番号は編集画面の「支給管理（任意）」</li>
-          <li><strong>🏭 業務改善</strong> … 交付申請期限（年度）・賃金6か月維持・事業完了・支給申請。賃金・設備投資額は任意入力</li>
+          <li><strong>🏭 業務改善</strong> … 交付申請期限（年度）・賃金6か月維持・事業完了・支給申請。事業場内最低賃金（引上げ前・引上げ後）・設備投資額は任意入力</li>
           <li><strong>⏰ 働き方改革</strong> … 交付申請・事業完了（年度）・支給申請期限。交付決定日は申請スケジュール用（任意）</li>
           <li><strong>👶 両立支援</strong> … コース別起算日から申請可能日・支給申請期限</li>
           <li><strong>📚 リスキリング</strong> … 計画届（開始6か月前〜1か月前）・支給申請（終了/受験の2か月以内）</li>
@@ -2477,13 +2501,18 @@
       if (n === null) return 'under1050';
       return n >= 1050 ? '1050+' : 'under1050';
     }
+    function fmtMinWage(v) {
+      if (v == null || v === '') return '—';
+      const n = parseOptionalInt(v);
+      return n === null ? '—' : `${n.toLocaleString('ja-JP')}円`;
+    }
+    function renderBizMinWageCell(v) {
+      return `<td style="font-family:monospace;font-size:12px;text-align:right;white-space:nowrap">${fmtMinWage(v)}</td>`;
+    }
     function renderBizEquipmentCell(app) {
       const parts = [];
       if (app.equipment_description) parts.push(`<div>${app.equipment_description}</div>`);
       if (app.equipment_amount != null) parts.push(`<div style="font-size:11px;color:#047857;font-weight:600;margin-top:2px">${fmtYen(app.equipment_amount)}</div>`);
-      if (app.min_wage_before != null || app.min_wage_after != null) {
-        parts.push(`<div style="font-size:11px;color:#6b7280;margin-top:2px">賃金 ${app.min_wage_before ?? '—'}→${app.min_wage_after ?? '—'}円</div>`);
-      }
       return parts.length ? parts.join('') : '—';
     }
     function renderBizFormDeadlineHints(app) {
@@ -2868,11 +2897,12 @@
         ${fRow('労働者数', fSelect('worker_count', [['', '—'], ['1人', '1人'], ['2〜3人', '2〜3人'], ['4〜5人', '4〜5人'], ['6〜7人', '6〜7人'], ['8人以上', '8人以上'], ['10人以上（特例）', '10人以上（特例）']], app?.worker_count || ''))}
       </div>
       ${fRow('特例区分', fInput('special_category', app?.special_category), '賃金要件・物価高騰等要件など')}
-      ${formSectionTitle('賃金・設備投資', '助成金計算の前提')}
+      ${formSectionTitle('事業場内最低賃金', '業務改善のみ・任意入力')}
       <div class="form-grid">
-        ${fRow('引上げ前 最低賃金（円）', fInput('min_wage_before', app?.min_wage_before ?? '', 'number', 'min="0" step="1" placeholder="例: 1040"'), '1,050円未満→助成率4/5')}
-        ${fRow('引上げ後 最低賃金（円）', fInput('min_wage_after', app?.min_wage_after ?? '', 'number', 'min="0" step="1" placeholder="例: 1090"'))}
+        ${fRow('事業場内最低賃金（引上げ前）', fInput('min_wage_before', app?.min_wage_before ?? '', 'number', 'min="0" step="1" placeholder="例: 1040"'), '円。1,050円未満→助成率4/5')}
+        ${fRow('引き上げ後の最低賃金', fInput('min_wage_after', app?.min_wage_after ?? '', 'number', 'min="0" step="1" placeholder="例: 1090"'), '円')}
       </div>
+      ${formSectionTitle('設備投資', '助成金計算の前提')}
       ${fRow('賃金引上げ日', fInput('wage_raise_date', toInputDate(parseDate(app?.wage_raise_date)), 'date'), '入力すると6か月維持期限を自動表示')}
       <div class="form-grid">
         ${fRow('設備投資金額（円）', fInput('equipment_amount', app?.equipment_amount ?? '', 'number', 'min="0" step="10000" placeholder="例: 6000000"'))}
@@ -3520,9 +3550,11 @@
       });
       data.biz.forEach(app => {
         const d = calcBiz(app); const co = app.company?.name || ''; const cid = app.company_id;
+        const wageNote = (app.min_wage_before != null || app.min_wage_after != null)
+          ? `賃金 ${fmtMinWage(app.min_wage_before)}→${fmtMinWage(app.min_wage_after)}` : null;
         items.push({
           type: 'biz', companyName: co, companyId: cid, target: null, createdAt: app.created_at || null,
-          detail: [app.wage_course, app.worker_count].filter(Boolean).join(' · ') || '—',
+          detail: [app.wage_course, app.worker_count, wageNote].filter(Boolean).join(' · ') || '—',
           statusRound: '—', status: app.status || '未申請',
           deadline: d.supLimit || d.compLimit, days: d.supDays ?? d.compDays,
         });
@@ -3761,6 +3793,7 @@
       <div style="display:flex;align-items:center;gap:14px">
         ${renderDeadlineSettingsBtn()}
         ${renderSlackSettingsBtn()}
+        ${renderOperationStartBtn()}
         ${hideExpiredToggle('background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 12px')}
         <span style="font-size:12px;color:#9ca3af">${todayStr}</span>
       </div>
@@ -4088,6 +4121,8 @@
         return `<tr data-app-id="${app.id}">
       <td>${app.wage_course || '—'}</td>
       <td>${app.worker_count || '—'}</td>
+      ${renderBizMinWageCell(app.min_wage_before)}
+      ${renderBizMinWageCell(app.min_wage_after)}
       <td style="font-size:12px;color:#4b5563;max-width:180px">${renderBizEquipmentCell(app)}</td>
       ${statusDateRowCells('biz', app)}
       <td>${stBadge(app.status)}</td>
@@ -4097,10 +4132,10 @@
       return sectionCard('blue', '🏭 業務改善助成金（令和8年度: 50/70/90円コース）', 'biz', companyId, `
     ${renderProgramLimitsBox('biz')}
     <table><thead><tr>
-      <th>コース</th><th>人数</th><th>設備投資</th>
+      <th>コース</th><th>人数</th><th style="text-align:right">事業場内最低賃金</th><th style="text-align:right">引き上げ後</th><th>設備投資</th>
       ${statusDateHeaderCells('biz')}<th>申請状況</th><th></th>
     </tr></thead>
-    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`, 'co-section-biz', bizSubsidyCalcBtn());
+    <tbody>${rows || '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:16px">登録なし</td></tr>'}</tbody></table>`, 'co-section-biz', bizSubsidyCalcBtn());
     }
 
     function renderWorkSection(apps, companyId = null) {
@@ -4230,6 +4265,8 @@
         return `<tr data-app-id="${app.id}">
       <td><a class="co-link" href="#company/${app.company_id}">${co?.name || '—'}</a></td>
       <td>${app.wage_course || '—'}</td><td>${app.worker_count || '—'}</td>
+      ${renderBizMinWageCell(app.min_wage_before)}
+      ${renderBizMinWageCell(app.min_wage_after)}
       ${statusDateRowCells('biz', app)}
       <td>${stBadge(app.status)}</td>
       <td>${appEditBtn('biz', app)}</td>
@@ -4252,8 +4289,9 @@
   ${renderProgramLimitsBox('biz')}
   <div class="card"><div style="overflow-x:auto"><table>
     <thead><tr><th>会社名</th><th>コース</th><th>人数</th>
+    <th style="text-align:right">事業場内最低賃金</th><th style="text-align:right">引き上げ後</th>
     ${statusDateHeaderCells('biz')}<th>申請状況</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
+    <tbody>${rows || '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:24px">データなし</td></tr>'}</tbody>
   </table></div></div>`;
     }
 
